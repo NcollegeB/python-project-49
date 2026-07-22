@@ -51,3 +51,6 @@ brain-symbol-match:
 
 brain-word-scramble:
 	poetry run brain-word-scramble
+
+brain-culmination:
+	poetry run brain-culmination

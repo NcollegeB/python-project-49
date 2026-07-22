@@ -59,15 +59,19 @@ class CliTest(unittest.TestCase):
             )
 
         text = output.getvalue()
-        self.assertIn('Choose 1-10, L for leaders, or Q to quit.', text)
+        self.assertIn('Choose 1-11, L for leaders, or Q to quit.', text)
         self.assertIn('ALL-GAME LEADERBOARD', text)
 
     def test_games_can_be_selected_by_number_slug_or_name(self):
-        game = cli.GAMES[-1][1]
+        word_scramble = cli.GAMES[-2][1]
+        culmination = cli.GAMES[-1][1]
 
-        self.assertIs(game, cli._find_game('10'))
-        self.assertIs(game, cli._find_game(' word-scramble '))
-        self.assertIs(game, cli._find_game('WORD SCRAMBLE'))
+        self.assertIs(word_scramble, cli._find_game('10'))
+        self.assertIs(word_scramble, cli._find_game(' word-scramble '))
+        self.assertIs(word_scramble, cli._find_game('WORD SCRAMBLE'))
+        self.assertIs(culmination, cli._find_game('11'))
+        self.assertIs(culmination, cli._find_game(' culmination '))
+        self.assertIs(culmination, cli._find_game('CULMINATION TEST'))
         self.assertIsNone(cli._find_game('not-a-game'))
 
 

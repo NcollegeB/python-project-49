@@ -11,6 +11,7 @@ MIN_PANEL_WIDTH = 40
 MAX_LIVES = 3
 GAME_LABELS = {
     'calc': 'Calculator',
+    'culmination': 'Culmination',
     'even': 'Even or Odd',
     'direction-focus': 'Direction Focus',
     'gcd': 'GCD',

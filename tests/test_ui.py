@@ -50,11 +50,13 @@ class TerminalUiTest(unittest.TestCase):
             [
                 {'player': 'Ada', 'game': 'calc', 'score': 9},
                 {'player': 'Grace', 'game': 'gcd', 'score': 7},
+                {'player': 'Lin', 'game': 'culmination', 'score': 11},
             ],
             output=output,
         )
         self.assertIn('Calculator', output.getvalue())
         self.assertIn('GCD', output.getvalue())
+        self.assertIn('Culmination', output.getvalue())
 
 
 if __name__ == '__main__':

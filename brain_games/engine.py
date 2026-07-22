@@ -58,6 +58,21 @@ def _run_game_hook(game, hook_name, *args):
         hook(*args)
 
 
+def _active_round_game(game):
+    get_active_game = getattr(game, 'get_active_game', None)
+    if callable(get_active_game):
+        active_game = get_active_game()
+        if active_game is not None:
+            return active_game
+    return game
+
+
+def _round_title(game, round_game):
+    if round_game is game:
+        return _game_name(game)
+    return '{} · {}'.format(_game_name(game), _game_name(round_game))
+
+
 def _answers_match(game, user_answer, expected_answer):
     return _normalise_answer(user_answer, game) == _normalise_answer(
         expected_answer,
@@ -67,6 +82,7 @@ def _answers_match(game, user_answer, expected_answer):
 
 def _render_round(
         game,
+        round_game,
         question,
         score,
         lives,
@@ -74,12 +90,14 @@ def _render_round(
         output,
         clear,
         sleep_func):
-    preview_seconds = getattr(game, 'PREVIEW_SECONDS', 0)
+    title = _round_title(game, round_game)
+    rules = round_game.RULES
+    preview_seconds = getattr(round_game, 'PREVIEW_SECONDS', 0)
     if preview_seconds:
         _clear_if_requested(clear, output)
         render_game(
-            _game_name(game),
-            game.RULES,
+            title,
+            rules,
             str(question),
             score,
             lives,
@@ -88,15 +106,15 @@ def _render_round(
         )
         sleep_func(preview_seconds)
         question = getattr(
-            game,
+            round_game,
             'HIDDEN_QUESTION',
             'Enter what you remember.',
         )
 
     _clear_if_requested(clear, output)
     render_game(
-        _game_name(game),
-        game.RULES,
+        title,
+        rules,
         str(question),
         score,
         lives,
@@ -134,8 +152,10 @@ def play_game(
 
     while lives > 0:
         question, expected_answer = game.get_question_and_answer()
+        round_game = _active_round_game(game)
         _render_round(
             game,
+            round_game,
             question,
             score,
             lives,
@@ -149,16 +169,25 @@ def play_game(
         if quit_early:
             break
 
-        is_correct = _answers_match(game, user_answer, expected_answer)
-        _run_game_hook(game, 'record_result', is_correct)
+        is_correct = _answers_match(
+            round_game,
+            user_answer,
+            expected_answer,
+        )
+        _run_game_hook(round_game, 'record_result', is_correct)
+        feedback_prefix = ''
+        if round_game is not game:
+            feedback_prefix = '{}: '.format(_game_name(round_game))
         if is_correct:
             score += 1
-            feedback = 'Correct! You earned 1 point.'
+            feedback = '{}Correct! You earned 1 point.'.format(
+                feedback_prefix,
+            )
         else:
             lives -= 1
             feedback = (
-                "'{}' is incorrect. The answer was '{}'."
-                .format(user_answer, expected_answer)
+                "{}'{}' is incorrect. The answer was '{}'."
+                .format(feedback_prefix, user_answer, expected_answer)
             )
 
     _clear_if_requested(clear, output)

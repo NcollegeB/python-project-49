@@ -2,34 +2,18 @@ import sys
 
 from brain_games.engine import ask_player_name
 from brain_games.engine import run
-from brain_games.games import brain_calc
-from brain_games.games import brain_even
-from brain_games.games import brain_direction_focus
-from brain_games.games import brain_gcd
-from brain_games.games import brain_number_memory
-from brain_games.games import brain_prime
-from brain_games.games import brain_progression
-from brain_games.games import brain_symbol_match
-from brain_games.games import brain_verbal_memory
-from brain_games.games import brain_word_scramble
+from brain_games.games import brain_culmination
+from brain_games.games.catalog import CORE_GAMES
 from brain_games.leaderboard import Leaderboard
 from brain_games.ui import clear_screen
 from brain_games.ui import render_leaderboard
 from brain_games.ui import render_panel
 
 
-GAMES = (
-    ('1', brain_even),
-    ('2', brain_calc),
-    ('3', brain_gcd),
-    ('4', brain_progression),
-    ('5', brain_prime),
-    ('6', brain_number_memory),
-    ('7', brain_verbal_memory),
-    ('8', brain_direction_focus),
-    ('9', brain_symbol_match),
-    ('10', brain_word_scramble),
-)
+GAMES = tuple(
+    (str(index), game)
+    for index, game in enumerate(CORE_GAMES, start=1)
+) + ((str(len(CORE_GAMES) + 1), brain_culmination),)
 
 
 def welcome_user(input_func=input, output=sys.stdout):
@@ -47,6 +31,8 @@ def _menu_lines(player_name, message=''):
         '',
     ]
     for number, game in GAMES:
+        if game is brain_culmination:
+            lines.append('')
         lines.append(
             '  {}. {} [{}]'.format(
                 number,
@@ -126,7 +112,9 @@ def main(
     render_panel(
         'BRAIN GAMES ARCADE',
         [
-            'Ten endless games. Three lives per run.',
+            '{} games plus a culmination test. Three lives per run.'.format(
+                len(CORE_GAMES),
+            ),
             'Set a high score and climb the leaderboard!',
         ],
         output,
@@ -160,7 +148,9 @@ def main(
             _show_goodbye(player_name, output, clear)
             return
         else:
-            message = 'Choose 1-10, L for leaders, or Q to quit.'
+            message = 'Choose 1-{}, L for leaders, or Q to quit.'.format(
+                len(GAMES),
+            )
 
 
 if __name__ == '__main__':

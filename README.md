@@ -1,9 +1,10 @@
 # Brain Games Arcade
 
-Brain Games Arcade is a collection of ten endless terminal challenges. Every
-correct answer adds one point, every mistake costs one of your three lives,
-and the run ends when no lives remain. Scores are saved to a persistent
-leaderboard, so each game can be replayed to improve your personal best.
+Brain Games Arcade contains ten standalone endless terminal challenges plus a
+mixed Culmination Test. Every correct answer adds one point, every mistake
+costs one of your three lives, and the run ends when no lives remain. Scores
+are saved to a persistent leaderboard, so each game can be replayed to improve
+your personal best.
 
 The `brain-games` command opens a terminal hub where you can launch any game
 and view the leaderboard without leaving the arcade.
@@ -22,6 +23,12 @@ and view the leaderboard without leaving the arcade.
 | Direction Focus | Attention | `brain-direction-focus` | `brain_games.games.brain_direction_focus` |
 | Symbol Match | Attention | `brain-symbol-match` | `brain_games.games.brain_symbol_match` |
 | Word Scramble | Language | `brain-word-scramble` | `brain_games.games.brain_word_scramble` |
+
+The separate **Culmination Test** is menu option 11. It combines all ten games
+into one endless run with a shared score and three shared lives. Each
+ten-round cycle is a shuffled bag containing one round from every source game,
+so all ten appear once before the next shuffled cycle begins. Culmination Test
+scores are recorded on their own leaderboard.
 
 The newer challenges draw on familiar memory, attention, speed, and language
 game formats. They are original terminal implementations for practice and
@@ -68,9 +75,10 @@ From the Poetry development environment, use:
 poetry run brain-games
 ```
 
-Choose a numbered game from the menu, enter `l` to view the leaderboard, or
-enter `q` to quit. A game continues until all three lives are gone or you
-return to the hub, and its score is saved in either case.
+Choose one of the ten standalone games or option 11 for the Culmination Test,
+enter `l` to view the leaderboard, or enter `q` to quit. A run continues until
+all three lives are gone or you return to the hub, and its score is saved in
+either case.
 
 ## Run one game directly
 
@@ -88,12 +96,13 @@ brain-verbal-memory
 brain-direction-focus
 brain-symbol-match
 brain-word-scramble
+brain-culmination
 ```
 
 ## Leaderboard data
 
-Each player's best result for each game is retained. By default, scores are
-stored at:
+Each player's best result for every standalone game and the Culmination Test is
+retained. By default, scores are stored at:
 
 ```text
 ~/.brain_games/leaderboard.json
@@ -117,4 +126,5 @@ make selfcheck
 ```
 
 The test suite covers the endless three-life loop, answer aliases, scoring,
-leaderboard persistence and ordering, game generators, and terminal hub flow.
+leaderboard persistence and ordering, game generators, the shuffled
+Culmination Test cycle, and terminal hub flow.

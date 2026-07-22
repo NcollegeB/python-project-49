@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "hexlet-code"
-version = "0.1.0"
-description = "Brain games. A set of five console games"
+version = "0.4.0"
+description = "A cognitive terminal arcade with a ten-game mixed test"
 authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
 packages = [
   { include = "brain_games" },
 ]
-repository = "https://github.com/NikGor/python-project-49"
+repository = "https://github.com/NcollegeB/python-project-49"
 classifiers = [
     "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Libraries :: Python Modules"
@@ -42,3 +42,9 @@ brain-calc = "brain_games.scripts.brain_calc:main"
 brain-gcd = "brain_games.scripts.brain_gcd:main"
 brain-progression = "brain_games.scripts.brain_progression:main"
 brain-prime = "brain_games.scripts.brain_prime:main"
+brain-number-memory = "brain_games.scripts.brain_number_memory:main"
+brain-verbal-memory = "brain_games.scripts.brain_verbal_memory:main"
+brain-direction-focus = "brain_games.scripts.brain_direction_focus:main"
+brain-symbol-match = "brain_games.scripts.brain_symbol_match:main"
+brain-word-scramble = "brain_games.scripts.brain_word_scramble:main"
+brain-culmination = "brain_games.scripts.brain_culmination:main"

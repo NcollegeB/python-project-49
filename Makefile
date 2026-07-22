@@ -2,10 +2,7 @@ install:
 	poetry install
 
 test:
-	poetry run pytest
-
-test-coverage:
-	poetry run pytest --cov=brain_games --cov-report xml
+	poetry run python -m unittest discover -s tests -v
 
 lint:
 	poetry run flake8 brain_games
@@ -39,3 +36,21 @@ brain-progression:
 
 brain-prime:
 	poetry run brain-prime
+
+brain-number-memory:
+	poetry run brain-number-memory
+
+brain-verbal-memory:
+	poetry run brain-verbal-memory
+
+brain-direction-focus:
+	poetry run brain-direction-focus
+
+brain-symbol-match:
+	poetry run brain-symbol-match
+
+brain-word-scramble:
+	poetry run brain-word-scramble
+
+brain-culmination:
+	poetry run brain-culmination

@@ -5,6 +5,9 @@ from brain_games.engine import MAX_VALUE
 MIN_SEQUENCE_LENGTH = 5  # минимальная длина прогрессии
 MAX_SEQUENCE_LENGTH = 10  # максимальная длина прогрессии
 DIFFERENCE = 10  # максимальный шаг прогрессии
+NAME = 'Missing Progression'
+SLUG = 'progression'
+CATEGORY = 'Reasoning'
 RULES = 'What number is missing in the progression?'
 
 

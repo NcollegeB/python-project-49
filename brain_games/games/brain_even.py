@@ -2,7 +2,11 @@ import random
 from brain_games.engine import MAX_VALUE
 
 
-RULES = 'Answer "yes" if the number is even, otherwise answer "no".'
+NAME = 'Even or Odd'
+SLUG = 'even'
+CATEGORY = 'Math'
+ANSWER_ALIASES = {'y': 'yes', 'n': 'no'}
+RULES = 'Is the number even? Answer yes/no or y/n.'
 
 
 def get_question_and_answer():

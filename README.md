@@ -1,33 +1,130 @@
-[![Actions Status](https://github.com/NikGor/python-project-49/workflows/hexlet-check/badge.svg)](https://github.com/NikGor/python-project-49/actions)  
-[![Maintainability](https://api.codeclimate.com/v1/badges/3a9eede6c803805091f8/maintainability)](https://codeclimate.com/github/NikGor/python-project-49/maintainability)
+# Brain Games Arcade
 
-## 🧠 Mind Games Description 
+Brain Games Arcade contains ten standalone endless terminal challenges plus a
+mixed Culmination Test. Every correct answer adds one point, every mistake
+costs one of your three lives, and the run ends when no lives remain. Scores
+are saved to a persistent leaderboard, so each game can be replayed to improve
+your personal best.
 
-**Mind Games** is a collection of five console games built on the principle of popular mobile brain training apps. Each game poses questions that require correct answers. Completing three correct answers wins the game. Incorrect answers terminate the game and suggest replaying. The games include:
+The `brain-games` command opens a terminal hub where you can launch any game
+and view the leaderboard without leaving the arcade.
 
-- 🧮 **Calculator**: Evaluate arithmetic expressions.
-- 🔢 **Progression**: Find the missing numbers in a sequence.
-- ✅ **Even**: Determine if a number is even.
-- ➗ **GCD**: Find the greatest common divisor.
-- 🎲 **Prime**: Determine if a number is a prime.
+## Games
 
-## 🛠 Installation Instructions 
+| Game | Category | Command | Game module |
+| --- | --- | --- | --- |
+| Even or Odd | Math | `brain-even` | `brain_games.games.brain_even` |
+| Calculator | Math | `brain-calc` | `brain_games.games.brain_calc` |
+| Greatest Common Divisor | Math | `brain-gcd` | `brain_games.games.brain_gcd` |
+| Missing Progression | Reasoning | `brain-progression` | `brain_games.games.brain_progression` |
+| Prime Number | Math | `brain-prime` | `brain_games.games.brain_prime` |
+| Number Memory | Memory | `brain-number-memory` | `brain_games.games.brain_number_memory` |
+| Verbal Memory | Memory | `brain-verbal-memory` | `brain_games.games.brain_verbal_memory` |
+| Direction Focus | Attention | `brain-direction-focus` | `brain_games.games.brain_direction_focus` |
+| Symbol Match | Attention | `brain-symbol-match` | `brain_games.games.brain_symbol_match` |
+| Word Scramble | Language | `brain-word-scramble` | `brain_games.games.brain_word_scramble` |
 
-Run `make build` to build the project.  
-Run `make package-install` for pip installation into your environment.
+The separate **Culmination Test** is menu option 11. It combines all ten games
+into one endless run with a shared score and three shared lives. Each
+ten-round cycle is a shuffled bag containing one round from every source game,
+so all ten appear once before the next shuffled cycle begins. Culmination Test
+scores are recorded on their own leaderboard.
 
-## 🎮 Available Commands After Installation 
+The newer challenges draw on familiar memory, attention, speed, and language
+game formats. They are original terminal implementations for practice and
+entertainment; this project is not affiliated with any benchmark or training
+service and does not claim medical or cognitive benefits.
 
-- **brain-even**: Determine if a number is even.
-- **brain-calc**: Calculator.
-- **brain-gcd**: Find the greatest common divisor.
-- **brain-progression**: Find the missing numbers in a sequence.
-- **brain-prime**: Determine if a number is a prime.
+## Short answers and controls
 
-## 🎞 Demo 
+- For every yes/no game, enter `y` or `yes`, and `n` or `no`.
+- In Direction Focus, enter `u`, `d`, `l`, or `r` instead of `up`, `down`,
+  `left`, or `right`. Arrow characters also work.
+- Enter `q` or `quit` during a game to save the current score and return to
+  the hub.
 
-[![asciicast](https://asciinema.org/a/76kjxFLKsJR47PzRA6XZlgFHd.svg)](https://asciinema.org/a/76kjxFLKsJR47PzRA6XZlgFHd)  
-[![asciicast](https://asciinema.org/a/k8MOp51rZEp7WoqiyT2nHaL9t.svg)](https://asciinema.org/a/k8MOp51rZEp7WoqiyT2nHaL9t)  
-[![asciicast](https://asciinema.org/a/uR1UWpDUqGuWMA1Ci8afwtC9M.svg)](https://asciinema.org/a/uR1UWpDUqGuWMA1Ci8afwtC9M)  
-[![asciicast](https://asciinema.org/a/3xbmEaBoe2YgQ2Rc6mpaedWZs.svg)](https://asciinema.org/a/3xbmEaBoe2YgQ2Rc6mpaedWZs)  
-[![asciicast](https://asciinema.org/a/9UCRGVzLZHpyPk8b9tX7xjAUU.svg)](https://asciinema.org/a/9UCRGVzLZHpyPk8b9tX7xjAUU)  
+Answers are case-insensitive. Games that require a number or a word still
+expect the complete answer, and any incorrect non-quit answer costs a life.
+
+## Install from this repository
+
+Poetry creates an isolated environment and installs every project command:
+
+```console
+poetry install
+```
+
+To build and install the wheel into your user environment instead:
+
+```console
+make build
+make package-install
+```
+
+## Run the arcade
+
+After a regular installation, launch the hub with:
+
+```console
+brain-games
+```
+
+From the Poetry development environment, use:
+
+```console
+poetry run brain-games
+```
+
+Choose one of the ten standalone games or option 11 for the Culmination Test,
+enter `l` to view the leaderboard, or enter `q` to quit. A run continues until
+all three lives are gone or you return to the hub, and its score is saved in
+either case.
+
+## Run one game directly
+
+Every game has its own command. Prefix a command with `poetry run` when using
+the Poetry environment:
+
+```console
+brain-even
+brain-calc
+brain-gcd
+brain-progression
+brain-prime
+brain-number-memory
+brain-verbal-memory
+brain-direction-focus
+brain-symbol-match
+brain-word-scramble
+brain-culmination
+```
+
+## Leaderboard data
+
+Each player's best result for every standalone game and the Culmination Test is
+retained. By default, scores are stored at:
+
+```text
+~/.brain_games/leaderboard.json
+```
+
+Set `BRAIN_GAMES_DATA_DIR` to choose a different data directory.
+
+## Tests and checks
+
+Run the test suite with:
+
+```console
+make test
+```
+
+Optional project checks are also available:
+
+```console
+make lint
+make selfcheck
+```
+
+The test suite covers the endless three-life loop, answer aliases, scoring,
+leaderboard persistence and ordering, game generators, the shuffled
+Culmination Test cycle, and terminal hub flow.

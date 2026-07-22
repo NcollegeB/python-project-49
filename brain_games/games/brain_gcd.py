@@ -1,6 +1,8 @@
 import random
 from brain_games.engine import MAX_VALUE
 
+NAME = 'Greatest Common Divisor'
+SLUG = 'gcd'
 RULES = 'Find the greatest common divisor of given numbers.'
 
 

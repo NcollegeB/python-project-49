@@ -2,7 +2,11 @@ from flask import Flask, render_template, jsonify
 from flask_cors import CORS
 from brain_games.models import db, Game
 from brain_games.admin import admin, GameAdminView
-from brain_games.games import brain_calc, brain_even, brain_gcd, brain_prime, brain_progression
+from brain_games.games import brain_calc
+from brain_games.games import brain_even
+from brain_games.games import brain_gcd
+from brain_games.games import brain_prime
+from brain_games.games import brain_progression
 from dotenv import load_dotenv
 import os
 
@@ -12,7 +16,9 @@ load_dotenv()
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = os.getenv('SQLALCHEMY_TRACK_MODIFICATIONS')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = os.getenv(
+    'SQLALCHEMY_TRACK_MODIFICATIONS',
+)
 
 db.init_app(app)
 admin.init_app(app)

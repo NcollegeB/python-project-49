@@ -12,3 +12,6 @@ coverage.xml
 .vim
 .env
 brain_games.db
+.brain_games/
+leaderboard.json
+leaderboard.json.lock

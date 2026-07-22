@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "hexlet-code"
-version = "0.1.0"
-description = "Brain games. A set of five console games"
+version = "0.2.0"
+description = "An endless three-life terminal arcade with leaderboards"
 authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
 packages = [
   { include = "brain_games" },
 ]
-repository = "https://github.com/NikGor/python-project-49"
+repository = "https://github.com/NcollegeB/python-project-49"
 classifiers = [
     "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Libraries :: Python Modules"

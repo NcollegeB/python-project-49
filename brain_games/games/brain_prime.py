@@ -2,6 +2,8 @@ import random
 from brain_games.engine import MAX_VALUE
 
 
+NAME = 'Prime Number'
+SLUG = 'prime'
 RULES = 'Answer "yes" if given number is prime. Otherwise answer "no".'
 
 

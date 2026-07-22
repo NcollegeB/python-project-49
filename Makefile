@@ -2,10 +2,7 @@ install:
 	poetry install
 
 test:
-	poetry run pytest
-
-test-coverage:
-	poetry run pytest --cov=brain_games --cov-report xml
+	poetry run python -m unittest discover -s tests -v
 
 lint:
 	poetry run flake8 brain_games

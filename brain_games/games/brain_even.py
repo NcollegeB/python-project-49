@@ -2,6 +2,8 @@ import random
 from brain_games.engine import MAX_VALUE
 
 
+NAME = 'Even or Odd'
+SLUG = 'even'
 RULES = 'Answer "yes" if the number is even, otherwise answer "no".'
 
 

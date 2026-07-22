@@ -66,6 +66,10 @@ class LeaderboardTest(unittest.TestCase):
             [entry['player'] for entry in prime_scores],
             ['Bob', 'Zoe'],
         )
+        ada_scores = self.leaderboard.top(player='ADA')
+        self.assertEqual(['Ada'], [
+            entry['player'] for entry in ada_scores
+        ])
         self.assertEqual(self.leaderboard.top(limit=0), [])
 
     def test_record_writes_with_atomic_replace_and_utc_timestamp(self):

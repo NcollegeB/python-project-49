@@ -9,6 +9,38 @@ your personal best.
 The `brain-games` command opens a terminal hub where you can launch any game
 and view the leaderboard without leaving the arcade.
 
+## Browser arcade (GUI experiment)
+
+This branch adds **Night Arcade Lab**, a responsive browser interface for all
+ten games and the separate Culmination Test. Each game has a focused visual
+stage, keyboard and touch controls, immediate right/wrong feedback, a live
+score and three-life display, and the same persistent local leaderboard as the
+terminal arcade.
+
+Visual feedback is drawn locally with the browser Canvas API. Sound cues are
+synthesized with the Web Audio API and can be muted from the header, so the GUI
+does not download media, fonts, trackers, or other third-party assets.
+
+Install the project and start the development server:
+
+```console
+poetry install
+make web
+```
+
+Then open <http://127.0.0.1:5000>. Direct game links use
+`/play/<game-slug>`, such as <http://127.0.0.1:5000/play/number-memory>.
+The JSON health check is available at <http://127.0.0.1:5000/healthz>.
+
+For a production-style local process, Gunicorn can serve the same app:
+
+```console
+poetry run gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 brain_games.app:app
+```
+
+Use one worker because active browser runs are intentionally held in memory;
+the leaderboard itself remains file-backed and persistent.
+
 ## Games
 
 | Game | Category | Command | Game module |
@@ -123,8 +155,12 @@ Optional project checks are also available:
 ```console
 make lint
 make selfcheck
+make web-check
 ```
+
+Run the complete verification set with `make check`.
 
 The test suite covers the endless three-life loop, answer aliases, scoring,
 leaderboard persistence and ordering, game generators, the shuffled
-Culmination Test cycle, and terminal hub flow.
+Culmination Test cycle, terminal hub flow, isolated browser runs, and API
+validation.

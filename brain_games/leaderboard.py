@@ -121,6 +121,18 @@ def _best_entries(raw_entries):
     return list(keyed_entries.values())
 
 
+def _filter_entries(entries, field, value):
+    if value is None:
+        return entries
+    if not isinstance(value, str):
+        raise TypeError('{} must be a string or None'.format(field))
+    key = value.strip().casefold()
+    return [
+        entry for entry in entries
+        if str(entry[field]).casefold() == key
+    ]
+
+
 class Leaderboard:
     """Store each player's best score for every game in a JSON file."""
 
@@ -150,22 +162,17 @@ class Leaderboard:
             self,
             limit: int = 10,
             game: Optional[str] = None,
+            player: Optional[str] = None,
     ) -> List[Dict[str, object]]:
-        """Return the highest scores, optionally restricted to one game."""
+        """Return high scores, optionally restricted by game or player."""
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise TypeError('limit must be an integer')
         if limit <= 0:
             return []
 
         entries = self._load_entries()
-        if game is not None:
-            if not isinstance(game, str):
-                raise TypeError('game must be a string or None')
-            game_key = game.strip().casefold()
-            entries = [
-                entry for entry in entries
-                if str(entry['game']).casefold() == game_key
-            ]
+        entries = _filter_entries(entries, 'game', game)
+        entries = _filter_entries(entries, 'player', player)
 
         entries.sort(key=self._sort_key)
         return [dict(entry) for entry in entries[:limit]]

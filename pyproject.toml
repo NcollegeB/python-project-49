@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "hexlet-code"
-version = "0.4.0"
-description = "A cognitive terminal arcade with a ten-game mixed test"
+version = "0.5.0"
+description = "A terminal and browser arcade with ten games and a mixed test"
 authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
 packages = [
   { include = "brain_games" },

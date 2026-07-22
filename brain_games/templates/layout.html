@@ -1,68 +1,88 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Brain Games</title>
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/main.css" rel="stylesheet">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#070B14">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="A collection of focused, fast-paced brain games for the browser.">
+    <title>{% block title %}Brain Games · Night Arcade Lab{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
-<body>
-    <div class="rounded-gradient" style = "height: 500px">
-        <div class="d-flex justify-content-center">
-            <div class="card w-25 mt-5">
-                <h1 class="h1 text-center py-4">Brain Games</h1>
+<body data-initial-game="{{ initial_game|default('', true)|e }}">
+    <a class="skip-link" href="#mainContent">Skip to the games</a>
+    <canvas id="effectsCanvas" class="effects-canvas" aria-hidden="true"></canvas>
+
+    <div class="app-shell">
+        <header class="site-header" aria-label="Primary navigation">
+            <a class="brand" href="/" aria-label="Brain Games home">
+                <span class="brand-mark" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span>
+                </span>
+                <span class="brand-copy">
+                    <span class="brand-kicker">Night Arcade Lab</span>
+                    <span class="brand-name">Brain Games</span>
+                </span>
+            </a>
+
+            <div class="header-actions">
+                <button class="utility-button" id="leaderboardButton" type="button">
+                    <span class="utility-icon" aria-hidden="true">◆</span>
+                    <span>Leaders</span>
+                </button>
+                <button class="utility-button sound-toggle" id="soundToggle" type="button"
+                        aria-pressed="true" aria-label="Sound on" title="Sound on">
+                    <span class="sound-glyph" aria-hidden="true">◖</span>
+                    <span data-sound-label>Sound on</span>
+                </button>
             </div>
-        </div>
+        </header>
+
+        <main id="mainContent">
+            {% block content %}{% endblock %}
+        </main>
+
+        <footer class="site-footer">
+            <p><span class="status-dot" aria-hidden="true"></span> Scores stay in your local arcade.</p>
+            <p class="keyboard-note"><kbd>Enter</kbd> submit <span aria-hidden="true">·</span> <kbd>Esc</kbd> menu</p>
+        </footer>
     </div>
-    {% block content %}{% endblock %}
-    <!-- Всплывающее окно -->
-    <div class="modal" tabindex="-1" id="apiResultModal">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <div class="modal-body d-flex flex-column align-items-center justify-content-center" style="height: 400px;">
-            <h4 class="card-title" id="rules">Rules</h4>
-            <h1 class="card-title" id="question">Question</h1>
-            <h4 class="card-text" id="answer" style="display: none;">Answer</h4>
-          </div>
-          <div class="modal-footer">
-            <input class="form-control p-4 col-4" type="text" id="userAnswer" placeholder="Your answer"
-                   style="font-size: 1.5rem;">
-            <button id="submitBtn" onclick="checkAnswer()" class="btn btn-primary btn-lg">Submit</button>
-            <button id="tryAgain" onclick="restartGame()" class="btn btn-primary btn-lg" style="display: none;">
-                Try Again
-            </button>
-            <button type="button" class="btn btn-secondary btn-lg" onclick="closeModal()">
-                Close
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <!-- Конец всплывающего окна -->
-    <div class="d-flex row mx-3 justify-content-center">
-        {% for game in games %}
-        <div class="col-lg-2 col-md-12">
-            <div class="card my-4">
-                <div class="card-body">
-                    <h2 class="card-title">
-                        <a href="#" data-name="{{ game.name }}" onclick="fetchGameData(this.getAttribute('data-name'))">{{ game.name }}</a>
-                    </h2>
-                    <p class="card-text mh-75">{{ game.description }}</p>
-                </div>
+
+    <dialog class="leaderboard-dialog" id="leaderboardDialog" aria-labelledby="leaderboardTitle">
+        <div class="dialog-header">
+            <div>
+                <p class="eyebrow">Local records</p>
+                <h2 id="leaderboardTitle">Leaderboard</h2>
             </div>
+            <button class="icon-button" id="closeLeaderboard" type="button" aria-label="Close leaderboard">×</button>
         </div>
-        {% endfor %}
-    </div>
-    <footer class="text-white">
-      <div class="container">
-        <div class="row py-3 d-flex justify-content-center">
-          <div class="col-md-2">
-            <div class="card border bg-transparent" style="height: 50px"></div>
-          </div>
+
+        <div class="leaderboard-toolbar">
+            <label for="leaderboardFilter">Show scores for</label>
+            <select id="leaderboardFilter" name="leaderboard-filter">
+                <option value="all">All games</option>
+            </select>
         </div>
-      </div>
-    </footer>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
-    <script src="/static/app.js"></script>
+
+        <div class="table-scroll" tabindex="0" aria-label="Leaderboard scores">
+            <table class="leaderboard-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Rank</th>
+                        <th scope="col">Player</th>
+                        <th scope="col">Game</th>
+                        <th scope="col">Score</th>
+                    </tr>
+                </thead>
+                <tbody id="leaderboardRows">
+                    <tr class="empty-row">
+                        <td colspan="4">Complete a run to set the first score.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </dialog>
+
+    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

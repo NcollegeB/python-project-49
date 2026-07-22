@@ -7,6 +7,7 @@ MAX_SEQUENCE_LENGTH = 10  # максимальная длина прогресс
 DIFFERENCE = 10  # максимальный шаг прогрессии
 NAME = 'Missing Progression'
 SLUG = 'progression'
+CATEGORY = 'Reasoning'
 RULES = 'What number is missing in the progression?'
 
 

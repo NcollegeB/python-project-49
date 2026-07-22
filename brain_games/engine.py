@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import sys
+import time
 
 from brain_games.leaderboard import Leaderboard
 from brain_games.ui import clear_screen
@@ -30,8 +31,11 @@ def _game_slug(game):
     return getattr(game, 'SLUG', default)
 
 
-def _normalise_answer(answer):
-    return str(answer).strip().casefold()
+def _normalise_answer(answer, game=None):
+    normalised = str(answer).strip().casefold()
+    aliases = getattr(game, 'ANSWER_ALIASES', {}) if game else {}
+    mapped_answer = aliases.get(normalised, normalised)
+    return str(mapped_answer).strip().casefold()
 
 
 def _clear_if_requested(clear, output):
@@ -46,6 +50,59 @@ def _read_answer(input_func, output):
         print('', file=output)
         return '', True
     return answer, _normalise_answer(answer) in {'q', 'quit'}
+
+
+def _run_game_hook(game, hook_name, *args):
+    hook = getattr(game, hook_name, None)
+    if callable(hook):
+        hook(*args)
+
+
+def _answers_match(game, user_answer, expected_answer):
+    return _normalise_answer(user_answer, game) == _normalise_answer(
+        expected_answer,
+        game,
+    )
+
+
+def _render_round(
+        game,
+        question,
+        score,
+        lives,
+        feedback,
+        output,
+        clear,
+        sleep_func):
+    preview_seconds = getattr(game, 'PREVIEW_SECONDS', 0)
+    if preview_seconds:
+        _clear_if_requested(clear, output)
+        render_game(
+            _game_name(game),
+            game.RULES,
+            str(question),
+            score,
+            lives,
+            feedback,
+            output,
+        )
+        sleep_func(preview_seconds)
+        question = getattr(
+            game,
+            'HIDDEN_QUESTION',
+            'Enter what you remember.',
+        )
+
+    _clear_if_requested(clear, output)
+    render_game(
+        _game_name(game),
+        game.RULES,
+        str(question),
+        score,
+        lives,
+        feedback,
+        output,
+    )
 
 
 def ask_player_name(input_func=input, output=sys.stdout):
@@ -66,32 +123,35 @@ def play_game(
         player_name,
         input_func=input,
         output=sys.stdout,
-        clear=True):
+        clear=True,
+        sleep_func=time.sleep):
     """Play until three answers are missed, returning the final result."""
     score = 0
     lives = MAX_LIVES
     feedback = 'Answer correctly to earn one point.'
     quit_early = False
+    _run_game_hook(game, 'start_session')
 
     while lives > 0:
         question, expected_answer = game.get_question_and_answer()
-        _clear_if_requested(clear, output)
-        render_game(
-            _game_name(game),
-            game.RULES,
-            str(question),
+        _render_round(
+            game,
+            question,
             score,
             lives,
             feedback,
             output,
+            clear,
+            sleep_func,
         )
 
         user_answer, quit_early = _read_answer(input_func, output)
         if quit_early:
             break
 
-        if _normalise_answer(user_answer) == _normalise_answer(
-                expected_answer):
+        is_correct = _answers_match(game, user_answer, expected_answer)
+        _run_game_hook(game, 'record_result', is_correct)
+        if is_correct:
             score += 1
             feedback = 'Correct! You earned 1 point.'
         else:
@@ -129,7 +189,8 @@ def run(
         leaderboard=None,
         input_func=input,
         output=sys.stdout,
-        clear=True):
+        clear=True,
+        sleep_func=time.sleep):
     """Run one game, save the score, and show that game's leaders."""
     if player_name is None:
         _clear_if_requested(clear, output)
@@ -143,6 +204,7 @@ def run(
         input_func=input_func,
         output=output,
         clear=clear,
+        sleep_func=sleep_func,
     )
     board = leaderboard or Leaderboard()
     try:

@@ -26,7 +26,7 @@ def answer_reader(answers):
 class CliTest(unittest.TestCase):
 
     def test_menu_launches_game_returns_and_quits(self):
-        responses = ['Nathan', '1', 'yes', 'no', 'no', 'no', '', '7']
+        responses = ['Nathan', '1', 'yes', 'no', 'no', 'no', '', 'q']
         output = StringIO()
         with TemporaryDirectory() as directory:
             board = Leaderboard(Path(directory) / 'scores.json')
@@ -47,7 +47,7 @@ class CliTest(unittest.TestCase):
         self.assertIn('THANKS FOR PLAYING', text)
 
     def test_invalid_choice_and_leaderboard_are_available(self):
-        responses = ['Ada', 'wrong', '6', '', 'q']
+        responses = ['Ada', 'wrong', 'l', '', 'q']
         output = StringIO()
         with TemporaryDirectory() as directory:
             board = Leaderboard(Path(directory) / 'scores.json')
@@ -59,8 +59,16 @@ class CliTest(unittest.TestCase):
             )
 
         text = output.getvalue()
-        self.assertIn("Choose 1-7, or enter 'q' to quit.", text)
+        self.assertIn('Choose 1-10, L for leaders, or Q to quit.', text)
         self.assertIn('ALL-GAME LEADERBOARD', text)
+
+    def test_games_can_be_selected_by_number_slug_or_name(self):
+        game = cli.GAMES[-1][1]
+
+        self.assertIs(game, cli._find_game('10'))
+        self.assertIs(game, cli._find_game(' word-scramble '))
+        self.assertIs(game, cli._find_game('WORD SCRAMBLE'))
+        self.assertIsNone(cli._find_game('not-a-game'))
 
 
 if __name__ == '__main__':

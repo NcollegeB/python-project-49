@@ -4,7 +4,9 @@ from brain_games.engine import MAX_VALUE
 
 NAME = 'Even or Odd'
 SLUG = 'even'
-RULES = 'Answer "yes" if the number is even, otherwise answer "no".'
+CATEGORY = 'Math'
+ANSWER_ALIASES = {'y': 'yes', 'n': 'no'}
+RULES = 'Is the number even? Answer yes/no or y/n.'
 
 
 def get_question_and_answer():

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "hexlet-code"
-version = "0.2.0"
-description = "An endless three-life terminal arcade with leaderboards"
+version = "0.3.0"
+description = "A ten-game cognitive terminal arcade with leaderboards"
 authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
 packages = [
   { include = "brain_games" },
@@ -42,3 +42,8 @@ brain-calc = "brain_games.scripts.brain_calc:main"
 brain-gcd = "brain_games.scripts.brain_gcd:main"
 brain-progression = "brain_games.scripts.brain_progression:main"
 brain-prime = "brain_games.scripts.brain_prime:main"
+brain-number-memory = "brain_games.scripts.brain_number_memory:main"
+brain-verbal-memory = "brain_games.scripts.brain_verbal_memory:main"
+brain-direction-focus = "brain_games.scripts.brain_direction_focus:main"
+brain-symbol-match = "brain_games.scripts.brain_symbol_match:main"
+brain-word-scramble = "brain_games.scripts.brain_word_scramble:main"

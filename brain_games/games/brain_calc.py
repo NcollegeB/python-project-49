@@ -5,6 +5,7 @@ CALC_OPERATIONS_NUMBER = 2  # количество операций в игре 
 CALC_MAX_VALUE = 10  # максимальное значение чисел для игры калькулятор
 NAME = 'Calculator'
 SLUG = 'calc'
+CATEGORY = 'Math'
 RULES = 'What is the result of the expression?'
 
 

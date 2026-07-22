@@ -12,9 +12,14 @@ MAX_LIVES = 3
 GAME_LABELS = {
     'calc': 'Calculator',
     'even': 'Even or Odd',
+    'direction-focus': 'Direction Focus',
     'gcd': 'GCD',
+    'number-memory': 'Number Memory',
     'prime': 'Prime Number',
     'progression': 'Progression',
+    'symbol-match': 'Symbol Match',
+    'verbal-memory': 'Verbal Memory',
+    'word-scramble': 'Word Scramble',
 }
 
 

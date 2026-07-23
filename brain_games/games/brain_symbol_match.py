@@ -6,7 +6,10 @@ import random
 NAME = 'Symbol Match'
 SLUG = 'symbol-match'
 CATEGORY = 'Attention'
-RULES = 'Answer yes/y if the symbols match, otherwise no/n.'
+RULES = (
+    'Answer yes/y when the symbols satisfy the shown match or rotation '
+    'rule, otherwise no/n.'
+)
 ANSWER_ALIASES = {
     'y': 'yes',
     'n': 'no',

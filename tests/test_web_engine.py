@@ -8,7 +8,9 @@ import unittest
 from brain_games.difficulty import CORRECT_PER_LEVEL
 from brain_games.difficulty import DIRECTION_DIFFERENCES_DEG
 from brain_games.difficulty import DIRECTION_ITEM_COUNTS
+from brain_games.difficulty import EXTENDED_MAX_LEVEL
 from brain_games.difficulty import MAX_LEVEL
+from brain_games.difficulty import max_level_for
 from brain_games.difficulty import SYMBOL_SEQUENCE_LENGTHS
 from brain_games.difficulty import time_limit_ms
 from brain_games.difficulty import VERBAL_HISTORY_WINDOWS
@@ -103,6 +105,16 @@ def assert_no_private_answer(test_case, value):
             assert_no_private_answer(test_case, child)
 
 
+def assert_no_forbidden_keys(test_case, value, forbidden):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            test_case.assertNotIn(key, forbidden)
+            assert_no_forbidden_keys(test_case, child, forbidden)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            assert_no_forbidden_keys(test_case, child, forbidden)
+
+
 def evaluate_expression(expression):
     python_expression = expression.replace('×', '*').replace('÷', '//')
     return eval(python_expression, {'__builtins__': {}}, {})
@@ -128,10 +140,31 @@ class CatalogTest(unittest.TestCase):
                         'rules',
                         'description',
                         'icon',
+                        'max_level',
                     },
                     set(game),
                 )
                 self.assertTrue(all(game.values()))
+                self.assertEqual(
+                    max_level_for(game['slug']),
+                    game['max_level'],
+                )
+
+    def test_only_extended_games_receive_eight_levels(self):
+        self.assertEqual(
+            EXTENDED_MAX_LEVEL,
+            max_level_for('direction-focus'),
+        )
+        self.assertEqual(
+            EXTENDED_MAX_LEVEL,
+            max_level_for('symbol-match'),
+        )
+        self.assertEqual(
+            EXTENDED_MAX_LEVEL,
+            max_level_for('culmination'),
+        )
+        self.assertEqual(MAX_LEVEL, max_level_for('calc'))
+        self.assertEqual(MAX_LEVEL, max_level_for('unknown-game'))
 
     def test_catalog_function_returns_fresh_mutable_copies(self):
         first = game_catalog()
@@ -190,6 +223,7 @@ class RunStoreTest(unittest.TestCase):
                 'hidden_prompt',
                 'cycle_position',
                 'cycle_total',
+                'source_level',
             },
             set(game_round),
         )
@@ -197,6 +231,7 @@ class RunStoreTest(unittest.TestCase):
         self.assertEqual('choice', game_round['kind'])
         self.assertIn('number', game_round['data'])
         self.assertEqual(1, game_round['level'])
+        self.assertEqual(1, game_round['source_level'])
         self.assertEqual('Foundation', game_round['difficulty_label'])
         self.assertEqual(4000, game_round['time_limit_ms'])
         self.assertEqual(['yes', 'no'], game_round['choices'])
@@ -221,6 +256,7 @@ class RunStoreTest(unittest.TestCase):
             'hidden_prompt',
             'cycle_position',
             'cycle_total',
+            'source_level',
         }
         for game in CORE_GAMES:
             with self.subTest(game=game.SLUG):
@@ -508,21 +544,42 @@ class LevelProgressionTest(unittest.TestCase):
         self.assertEqual(2, advanced['result']['level_after'])
         self.assertTrue(advanced['result']['leveled_up'])
 
-    def test_level_five_repeats_without_exceeding_the_cap(self):
-        run = self.store.create('calc', 'Ada')
-        state = self.store._runs[run['run_id']]
-        state.level = MAX_LEVEL
-        state.level_progress = CORRECT_PER_LEVEL - 1
-        state.round = self.store._make_round(state)
-        run = self.store._public_run(state)
+    def test_default_games_stop_at_five_and_extended_games_stop_at_eight(self):
+        for slug in ('calc', 'direction-focus', 'symbol-match', 'culmination'):
+            with self.subTest(game=slug):
+                run = self.store.create(slug, 'Ada')
+                state = self.store._runs[run['run_id']]
+                cap = max_level_for(slug)
+                state.level = cap
+                state.level_progress = CORRECT_PER_LEVEL - 1
+                state.round = self.store._make_round(state)
+                run = self.store._public_run(state)
 
-        result = self._answer_correctly(run)
+                result = self._answer_correctly(run)
 
-        self.assertEqual(MAX_LEVEL, result['level'])
-        self.assertEqual(0, result['level_progress'])
-        self.assertFalse(result['result']['leveled_up'])
-        self.assertEqual(MAX_LEVEL, result['result']['level_before'])
-        self.assertEqual(MAX_LEVEL, result['result']['level_after'])
+                self.assertEqual(cap, result['level'])
+                self.assertEqual(0, result['level_progress'])
+                self.assertFalse(result['result']['leveled_up'])
+                self.assertEqual(cap, result['result']['level_before'])
+                self.assertEqual(cap, result['result']['level_after'])
+                self.assertEqual(cap, result['max_level'])
+
+    def test_extended_games_advance_beyond_level_five(self):
+        for slug in ('direction-focus', 'symbol-match', 'culmination'):
+            with self.subTest(game=slug):
+                run = self.store.create(slug, 'Ada')
+                state = self.store._runs[run['run_id']]
+                state.level = MAX_LEVEL
+                state.level_progress = CORRECT_PER_LEVEL - 1
+                state.round = self.store._make_round(state)
+
+                result = self._answer_correctly(
+                    self.store._public_run(state),
+                )
+
+                self.assertEqual(MAX_LEVEL + 1, result['level'])
+                self.assertEqual(EXTENDED_MAX_LEVEL, result['max_level'])
+                self.assertTrue(result['result']['leveled_up'])
 
     def test_unranked_runs_never_write_and_ruleset_scores_are_isolated(self):
         unranked = self.store.create('calc', 'Practice', ranked=False)
@@ -616,7 +673,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
 
     def test_every_source_exposes_level_label_and_configured_timer(self):
         for game in CORE_GAMES:
-            for level in range(1, MAX_LEVEL + 1):
+            for level in range(1, max_level_for(game.SLUG) + 1):
                 with self.subTest(game=game.SLUG, level=level):
                     game_round = self._rounds(
                         game.SLUG,
@@ -624,11 +681,31 @@ class DifficultyGeneratorTest(unittest.TestCase):
                         count=1,
                     )[0]['public']
                     self.assertEqual(level, game_round['level'])
+                    self.assertEqual(level, game_round['source_level'])
                     self.assertTrue(game_round['difficulty_label'])
                     self.assertEqual(
                         time_limit_ms(game.SLUG, level),
                         game_round['time_limit_ms'],
                     )
+
+    def test_extended_timer_and_content_tables_have_eight_levels(self):
+        self.assertEqual(EXTENDED_MAX_LEVEL, len(DIRECTION_ITEM_COUNTS))
+        self.assertEqual(
+            EXTENDED_MAX_LEVEL,
+            len(DIRECTION_DIFFERENCES_DEG),
+        )
+        self.assertEqual(
+            EXTENDED_MAX_LEVEL,
+            len(SYMBOL_SEQUENCE_LENGTHS),
+        )
+        for slug in ('direction-focus', 'symbol-match'):
+            with self.subTest(game=slug):
+                limits = tuple(
+                    time_limit_ms(slug, level)
+                    for level in range(1, EXTENDED_MAX_LEVEL + 1)
+                )
+                self.assertEqual(EXTENDED_MAX_LEVEL, len(limits))
+                self.assertTrue(all(limit > 0 for limit in limits))
 
     def test_even_timer_grows_with_content_complexity(self):
         self.assertEqual(
@@ -889,66 +966,27 @@ class DifficultyGeneratorTest(unittest.TestCase):
         self.assertEqual(sorted(effective_lags), effective_lags)
         self.assertLess(effective_lags[0], effective_lags[-1])
 
-    def test_direction_levels_scale_and_balance_orientations(self):
-        expected_orientation_counts = (1, 1, 2, 2, 3)
-        for level in range(1, MAX_LEVEL + 1):
+    def test_direction_orientation_levels_have_one_target_angle(self):
+        for level in range(1, 5):
             for game_round in self._rounds(
                     'direction-focus',
                     level,
                     count=12):
-                data = game_round['public']['data']
+                public = game_round['public']
+                data = public['data']
                 target_angle = web_engine._DIRECTION_ANGLES[
                     game_round['expected_answer']
                 ]
                 rotations = data['rotations']
+
+                self.assertEqual('orientation', data['task_mode'])
+                self.assertEqual(level, public['source_level'])
                 self.assertEqual(
                     DIRECTION_ITEM_COUNTS[level - 1],
                     len(rotations),
                 )
                 self.assertEqual(1, rotations.count(target_angle))
-                distractor_counts = Counter(
-                    rotation
-                    for rotation in rotations
-                    if rotation != target_angle
-                )
-                self.assertEqual(
-                    expected_orientation_counts[level - 1],
-                    len(distractor_counts),
-                )
-                maximum_count = max(distractor_counts.values())
-                minimum_count = min(distractor_counts.values())
-                orientation_spread = maximum_count - minimum_count
-                self.assertLessEqual(
-                    orientation_spread,
-                    1,
-                )
-                self.assertGreaterEqual(
-                    min(distractor_counts.values()),
-                    2,
-                )
-                differences = [
-                    min(
-                        (rotation - target_angle) % 360,
-                        (target_angle - rotation) % 360,
-                    )
-                    for rotation in rotations
-                    if rotation != target_angle
-                ]
-                self.assertEqual(
-                    DIRECTION_DIFFERENCES_DEG[level - 1],
-                    min(differences),
-                )
-                if level < 5:
-                    self.assertEqual(
-                        {DIRECTION_DIFFERENCES_DEG[level - 1]},
-                        set(differences),
-                    )
-                else:
-                    self.assertEqual({20, 40}, set(differences))
-                self.assertEqual(
-                    expected_orientation_counts[level - 1],
-                    data['distractor_orientation_count'],
-                )
+                self.assertEqual(len(rotations), len(data['items']))
                 self.assertEqual(
                     len(rotations),
                     len(data['accessible_sequence']),
@@ -957,77 +995,342 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     item['accessible_label']
                     for item in data['items']
                 ))
-                if DIRECTION_DIFFERENCES_DEG[level - 1] % 45:
-                    self.assertEqual(
-                        (
-                            'Find the one arrow pointing in a '
-                            'different direction.'
-                        ),
-                        game_round['public']['prompt'],
-                    )
+                differences = {
+                    self._angular_difference(rotation, target_angle)
+                    for rotation in rotations
+                    if rotation != target_angle
+                }
+                self.assertEqual(
+                    {DIRECTION_DIFFERENCES_DEG[level - 1]},
+                    differences,
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'target_index', 'is_target'},
+                )
 
-    def test_symbol_levels_have_one_authored_accessible_mismatch(self):
-        for level in range(1, MAX_LEVEL + 1):
-            rounds = self._rounds('symbol-match', level, count=10)
-            answers = []
-            for game_round in rounds:
-                data = game_round['public']['data']
+    def test_direction_two_feature_levels_require_a_unique_combination(self):
+        for level in (5, 6):
+            for game_round in self._rounds(
+                    'direction-focus',
+                    level,
+                    count=16):
+                public = game_round['public']
+                data = public['data']
+                items = data['items']
+                combinations = Counter(
+                    (item['rotation_deg'], item['frame'])
+                    for item in items
+                )
+                unique = [
+                    combination
+                    for combination, count in combinations.items()
+                    if count == 1
+                ]
+                target_angle = web_engine._DIRECTION_ANGLES[
+                    game_round['expected_answer']
+                ]
+
+                self.assertEqual(
+                    'two_feature_conjunction',
+                    data['task_mode'],
+                )
+                self.assertEqual(DIRECTION_ITEM_COUNTS[level - 1], len(items))
+                self.assertEqual(6, len(combinations))
+                self.assertEqual(1, len(unique))
+                self.assertEqual(target_angle, unique[0][0])
+                self.assertTrue(all(
+                    count > 1
+                    for combination, count in combinations.items()
+                    if combination != unique[0]
+                ))
+                orientation_counts = Counter(
+                    item['rotation_deg']
+                    for item in items
+                )
+                frame_counts = Counter(
+                    item['frame']
+                    for item in items
+                )
+                self.assertEqual(3, len(orientation_counts))
+                self.assertEqual(
+                    [len(items) // 3] * 3,
+                    sorted(orientation_counts.values()),
+                )
+                self.assertEqual(2, len(frame_counts))
+                self.assertEqual(
+                    [len(items) // 2] * 2,
+                    sorted(frame_counts.values()),
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'target_index', 'is_target'},
+                )
+
+    def test_direction_three_feature_levels_balance_every_feature(self):
+        for level in (7, 8):
+            for game_round in self._rounds(
+                    'direction-focus',
+                    level,
+                    count=16):
+                public = game_round['public']
+                data = public['data']
+                items = data['items']
+                combinations = Counter(
+                    (
+                        item['rotation_deg'],
+                        item['frame'],
+                        item['marker'],
+                    )
+                    for item in items
+                )
+                unique = [
+                    combination
+                    for combination, count in combinations.items()
+                    if count == 1
+                ]
+                target_angle = web_engine._DIRECTION_ANGLES[
+                    game_round['expected_answer']
+                ]
+
+                self.assertEqual(
+                    'three_feature_conjunction',
+                    data['task_mode'],
+                )
+                self.assertEqual(DIRECTION_ITEM_COUNTS[level - 1], len(items))
+                self.assertEqual(8, len(combinations))
+                self.assertEqual(1, len(unique))
+                self.assertEqual(target_angle, unique[0][0])
+                for feature in ('rotation_deg', 'frame', 'marker'):
+                    feature_counts = Counter(
+                        item[feature]
+                        for item in items
+                    )
+                    self.assertEqual(
+                        [18, 18],
+                        sorted(feature_counts.values()),
+                    )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'target_index', 'is_target'},
+                )
+
+    @staticmethod
+    def _angular_difference(first, second):
+        difference = abs(first - second)
+        return min(difference, 360 - difference)
+
+    def test_symbol_basic_levels_use_exact_comparisons(self):
+        for level in range(1, 4):
+            for game_round in self._rounds(
+                    'symbol-match',
+                    level,
+                    count=10):
+                public = game_round['public']
+                data = public['data']
                 left = data['left_symbols']
                 right = data['right_symbols']
-                mismatch_count = sum(
-                    first != second
-                    for first, second in zip(left, right)
+                mismatch_indices = [
+                    index
+                    for index, pair in enumerate(zip(left, right))
+                    if pair[0] != pair[1]
+                ]
+                expected_mismatches = (
+                    0 if game_round['expected_answer'] == 'yes' else 1
                 )
+
+                self.assertEqual('exact', data['comparison_rule'])
                 self.assertEqual(
                     SYMBOL_SEQUENCE_LENGTHS[level - 1],
                     len(left),
                 )
-                expected_mismatches = (
+                self.assertEqual(expected_mismatches, len(mismatch_indices))
+                self._assert_public_symbol_tokens(data)
+                self._assert_no_symbol_answer_leak(public)
+                if mismatch_indices:
+                    index = mismatch_indices[0]
+                    self._assert_basic_symbol_feature_change(
+                        level,
+                        data['left_tokens'][index],
+                        data['right_tokens'][index],
+                    )
+
+    def test_symbol_arrow_levels_scale_orientation_precision(self):
+        specifications = {
+            4: (8, 90),
+            5: (10, 45),
+            6: (12, 15),
+        }
+        for level, (length, angle_step) in specifications.items():
+            for game_round in self._rounds(
+                    'symbol-match',
+                    level,
+                    count=10):
+                public = game_round['public']
+                data = public['data']
+                left = [
+                    token['rotation_deg']
+                    for token in data['left_tokens']
+                ]
+                right = [
+                    token['rotation_deg']
+                    for token in data['right_tokens']
+                ]
+                violations = [
+                    index
+                    for index, pair in enumerate(zip(left, right))
+                    if pair[0] != pair[1]
+                ]
+                expected_violations = (
                     0 if game_round['expected_answer'] == 'yes' else 1
                 )
-                self.assertEqual(expected_mismatches, mismatch_count)
-                self.assertEqual(
-                    left,
-                    [
-                        token['symbol']
-                        for token in data['left_tokens']
-                    ],
-                )
-                self.assertEqual(
-                    right,
-                    [
-                        token['symbol']
-                        for token in data['right_tokens']
-                    ],
-                )
+
+                self.assertEqual('exact', data['comparison_rule'])
+                self.assertEqual(length, len(left))
                 self.assertTrue(all(
-                    token['accessible_label']
-                    for token in (
-                        data['left_tokens'] + data['right_tokens']
-                    )
+                    angle % angle_step == 0
+                    for angle in left + right
                 ))
-                mismatch_indices = [
-                    index
-                    for index, (left_symbol, right_symbol) in enumerate(
-                        zip(left, right),
+                self.assertEqual(expected_violations, len(violations))
+                if violations:
+                    index = violations[0]
+                    self.assertEqual(
+                        angle_step,
+                        self._angular_difference(
+                            left[index],
+                            right[index],
+                        ),
                     )
-                    if left_symbol != right_symbol
-                ]
-                self.assertNotIn('mismatch_index', data)
-                self.assertNotIn('mismatch_kind', data)
-                if mismatch_indices:
-                    mismatch_index = mismatch_indices[0]
-                    left_token = data['left_tokens'][mismatch_index]
-                    right_token = data['right_tokens'][mismatch_index]
-                    self._assert_symbol_feature_change(
-                        level,
-                        left_token,
-                        right_token,
-                    )
-                answers.append(game_round['expected_answer'])
+                self._assert_public_symbol_tokens(data)
+                self._assert_no_symbol_answer_leak(public)
+
+    def test_symbol_level_seven_applies_one_global_rotation(self):
+        for game_round in self._rounds(
+                'symbol-match',
+                7,
+                count=10):
+            public = game_round['public']
+            data = public['data']
+            transform = data['transform_degrees']
+            left = [
+                token['rotation_deg']
+                for token in data['left_tokens']
+            ]
+            right = [
+                token['rotation_deg']
+                for token in data['right_tokens']
+            ]
+            expected = [
+                (angle + transform) % 360
+                for angle in left
+            ]
+            violations = [
+                index
+                for index, pair in enumerate(zip(expected, right))
+                if pair[0] != pair[1]
+            ]
+            expected_violations = (
+                0 if game_round['expected_answer'] == 'yes' else 1
+            )
+
+            self.assertEqual('global_rotation', data['comparison_rule'])
+            self.assertIn(transform, (90, 180, 270))
+            self.assertEqual(SYMBOL_SEQUENCE_LENGTHS[6], len(left))
+            self.assertEqual(expected_violations, len(violations))
+            self._assert_public_symbol_tokens(data)
+            self._assert_no_symbol_answer_leak(public)
+
+    def test_symbol_level_eight_rotates_grid_positions_and_arrows(self):
+        for game_round in self._rounds(
+                'symbol-match',
+                8,
+                count=10):
+            public = game_round['public']
+            data = public['data']
+            transform = data['transform_degrees']
+            left = [
+                token['rotation_deg']
+                for token in data['left_tokens']
+            ]
+            right = [
+                token['rotation_deg']
+                for token in data['right_tokens']
+            ]
+            expected = self._rotate_test_grid(left, transform // 90)
+            violations = [
+                index
+                for index, pair in enumerate(zip(expected, right))
+                if pair[0] != pair[1]
+            ]
+            expected_violations = (
+                0 if game_round['expected_answer'] == 'yes' else 1
+            )
+
+            self.assertEqual('grid_rotation', data['comparison_rule'])
+            self.assertIn(transform, (90, 180, 270))
+            self.assertEqual(3, data['pattern_columns'])
+            self.assertEqual(9, len(left))
+            self.assertEqual(expected_violations, len(violations))
+            self._assert_public_symbol_tokens(data)
+            self._assert_no_symbol_answer_leak(public)
+
+    def test_symbol_truth_answers_balance_at_every_level(self):
+        for level in range(1, EXTENDED_MAX_LEVEL + 1):
+            answers = [
+                game_round['expected_answer']
+                for game_round in self._rounds(
+                    'symbol-match',
+                    level,
+                    count=10,
+                )
+            ]
             self.assertEqual({'yes': 5, 'no': 5}, Counter(answers))
 
-    def _assert_symbol_feature_change(self, level, left, right):
+    def _assert_public_symbol_tokens(self, data):
+        self.assertEqual(
+            data['left_symbols'],
+            [token['symbol'] for token in data['left_tokens']],
+        )
+        self.assertEqual(
+            data['right_symbols'],
+            [token['symbol'] for token in data['right_tokens']],
+        )
+        self.assertTrue(all(
+            token['accessible_label']
+            for token in data['left_tokens'] + data['right_tokens']
+        ))
+
+    def _assert_no_symbol_answer_leak(self, public):
+        assert_no_forbidden_keys(
+            self,
+            public,
+            {
+                'answer',
+                'expected_answer',
+                'mismatch_index',
+                'mismatch_kind',
+            },
+        )
+
+    @staticmethod
+    def _rotate_test_grid(angles, quarter_turns):
+        rotated = list(angles)
+        for _turn in range(quarter_turns):
+            next_grid = [None] * 9
+            for row in range(3):
+                for column in range(3):
+                    next_row = column
+                    next_column = 2 - row
+                    next_grid[(next_row * 3) + next_column] = (
+                        rotated[(row * 3) + column] + 90
+                    ) % 360
+            rotated = next_grid
+        return rotated
+
+    def _assert_basic_symbol_feature_change(self, level, left, right):
         if level == 1:
             self.assertNotEqual(left['shape'], right['shape'])
             self.assertNotEqual(left['fill'], right['fill'])
@@ -1037,23 +1340,6 @@ class DifficultyGeneratorTest(unittest.TestCase):
         elif level == 3:
             self.assertEqual(left['shape'], right['shape'])
             self.assertNotEqual(left['fill'], right['fill'])
-        elif level == 4:
-            self.assertEqual(left['shape'], right['shape'])
-            self.assertEqual(left['fill'], right['fill'])
-            angular_difference = abs(
-                left['rotation_deg'] - right['rotation_deg'],
-            )
-            self.assertEqual(
-                90,
-                min(angular_difference, 360 - angular_difference),
-            )
-        else:
-            self.assertEqual(left['shape'], right['shape'])
-            self.assertEqual(left['fill'], right['fill'])
-            self.assertNotEqual(
-                left['internal_mark'],
-                right['internal_mark'],
-            )
 
     def test_scramble_pool_excludes_ambiguous_and_invalid_candidates(self):
         all_words = [
@@ -1137,23 +1423,37 @@ class DifficultyGeneratorTest(unittest.TestCase):
 
 class CulminationRunTest(unittest.TestCase):
 
-    def test_round_uses_global_level_and_its_source_timer(self):
-        store = RunStore(
-            leaderboard=MemoryLeaderboard(),
-            random_factory=lambda: NoShuffleRandom(5),
-        )
-        run = store.create('culmination', 'Ada')
-        state = store._runs[run['run_id']]
-        state.level = 4
-        state.level_progress = 1
-        state.round = store._make_round(state)
-        public = state.round['public']
+    def test_level_eight_clamps_each_source_and_uses_its_timer(self):
+        source_levels = {
+            'even': MAX_LEVEL,
+            'direction-focus': EXTENDED_MAX_LEVEL,
+            'symbol-match': EXTENDED_MAX_LEVEL,
+        }
+        for source_slug, source_level in source_levels.items():
+            with self.subTest(source=source_slug):
+                store = RunStore(
+                    leaderboard=MemoryLeaderboard(),
+                    random_factory=lambda: NoShuffleRandom(5),
+                )
+                run = store.create('culmination', 'Ada')
+                state = store._runs[run['run_id']]
+                state.level = EXTENDED_MAX_LEVEL
+                state.level_progress = 1
+                state.game_bag = [source_slug]
+                state.round = store._make_round(state)
+                public = state.round['public']
 
-        self.assertEqual(4, public['level'])
-        self.assertEqual(
-            time_limit_ms(public['source_slug'], 4),
-            public['time_limit_ms'],
-        )
+                self.assertEqual(EXTENDED_MAX_LEVEL, public['level'])
+                self.assertEqual(source_slug, public['source_slug'])
+                self.assertEqual(source_level, public['source_level'])
+                self.assertEqual(
+                    time_limit_ms(source_slug, source_level),
+                    public['time_limit_ms'],
+                )
+                self.assertEqual(
+                    web_engine.difficulty_label(source_level),
+                    public['difficulty_label'],
+                )
 
     def test_cycle_contains_every_core_game_before_repeating(self):
         store = RunStore(

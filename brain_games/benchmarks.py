@@ -2,9 +2,9 @@
 
 The values in this module are deliberately static.  They are not collected
 from players and must not be presented as population norms or scientific
-measurements.  Each game has one reference round accuracy for each of its five
-levels.  A player advances after every three correct answers and a run ends on
-its third miss.
+measurements.  Each game has one reference round accuracy for each configured
+difficulty level.  A player advances after every three correct answers and a
+run ends on its third miss.
 
 The score distribution is calculated deterministically from those static
 assumptions, with negligible floating-point tail truncation.  This gives the
@@ -17,11 +17,11 @@ import math
 from dataclasses import dataclass
 
 from brain_games.difficulty import CORRECT_PER_LEVEL
-from brain_games.difficulty import MAX_LEVEL
+from brain_games.difficulty import max_level_for
 
 
 BENCHMARK_NAME = 'BrainHacker benchmark'
-BENCHMARK_METHOD = 'progressive_five_level_score_before_three_misses'
+BENCHMARK_METHOD = 'progressive_configured_levels_before_three_misses'
 MISSES_BEFORE_END = 3
 BENCHMARK_DISCLAIMER = (
     'A fixed mathematical reference, not measured population or scientific '
@@ -29,8 +29,9 @@ BENCHMARK_DISCLAIMER = (
 )
 BENCHMARK_METHODOLOGY = (
     'Assumes independent rounds using one fixed reference accuracy at each '
-    'of five levels. Every three correct answers advances a level, level 5 '
-    'continues indefinitely, and a run ends after three misses.'
+    'configured difficulty level. Every three correct answers advances a '
+    'level, the final configured level continues indefinitely, and a run '
+    'ends after three misses.'
 )
 
 
@@ -78,12 +79,12 @@ _SPECS = (
     _BenchmarkSpec(
         'direction-focus',
         'Direction Focus',
-        (0.95, 0.88, 0.78, 0.66, 0.52),
+        (0.95, 0.88, 0.78, 0.65, 0.52, 0.40, 0.30, 0.22),
     ),
     _BenchmarkSpec(
         'symbol-match',
         'Symbol Match',
-        (0.96, 0.90, 0.82, 0.72, 0.58),
+        (0.96, 0.90, 0.82, 0.72, 0.60, 0.48, 0.36, 0.26),
     ),
     _BenchmarkSpec(
         'word-scramble',
@@ -93,7 +94,7 @@ _SPECS = (
     _BenchmarkSpec(
         'culmination',
         'Culmination Test',
-        (0.92, 0.84, 0.73, 0.61, 0.48),
+        (0.92, 0.84, 0.73, 0.61, 0.48, 0.38, 0.30, 0.24),
     ),
 )
 
@@ -113,7 +114,7 @@ def _validate_score(score):
 
 @lru_cache(maxsize=None)
 def _model_summary(level_accuracies):
-    """Return ``(average, cdf_by_score)`` for a five-level score model.
+    """Return ``(average, cdf_by_score)`` for a progressive score model.
 
     ``arrivals[m]`` is the probability of reaching the current score with
     ``m`` misses.  Before the next success, a player can miss zero or more
@@ -121,8 +122,8 @@ def _model_summary(level_accuracies):
     states forward preserves level boundaries; only a probability tail below
     1e-12 is omitted.
     """
-    if len(level_accuracies) != MAX_LEVEL:
-        raise ValueError('one reference accuracy is required per level')
+    if not level_accuracies:
+        raise ValueError('at least one reference accuracy is required')
     if any(
             not math.isfinite(accuracy) or not 0.0 < accuracy < 1.0
             for accuracy in level_accuracies
@@ -202,6 +203,14 @@ def benchmark_for(game_slug, score=None):
     except KeyError as error:
         raise UnknownBenchmarkError(game_slug) from error
 
+    max_level = max_level_for(spec.slug)
+    if len(spec.level_accuracies) != max_level:
+        raise ValueError(
+            '{} requires {} reference accuracies'.format(
+                spec.slug,
+                max_level,
+            ),
+        )
     average = _average_score(spec.level_accuracies)
     result = {
         'slug': spec.slug,
@@ -210,6 +219,7 @@ def benchmark_for(game_slug, score=None):
         'method': BENCHMARK_METHOD,
         'misses_before_end': MISSES_BEFORE_END,
         'correct_per_level': CORRECT_PER_LEVEL,
+        'max_level': max_level,
         'level_accuracies': list(spec.level_accuracies),
         'level_accuracy_percents': [
             int(round(accuracy * 100))

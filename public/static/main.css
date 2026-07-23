@@ -997,6 +997,7 @@ kbd {
 }
 
 .arrow-token {
+    position: relative;
     display: grid;
     place-items: center;
     width: clamp(44px, 8vw, 66px);
@@ -1013,37 +1014,105 @@ kbd {
     transform-origin: center;
 }
 
-.arrow-token[data-rotation="20"] { --arrow-rotation: 20deg; }
-.arrow-token[data-rotation="30"] { --arrow-rotation: 30deg; }
-.arrow-token[data-rotation="40"] { --arrow-rotation: 40deg; }
-.arrow-token[data-rotation="45"] { --arrow-rotation: 45deg; }
-.arrow-token[data-rotation="50"] { --arrow-rotation: 50deg; }
-.arrow-token[data-rotation="60"] { --arrow-rotation: 60deg; }
-.arrow-token[data-rotation="70"] { --arrow-rotation: 70deg; }
-.arrow-token[data-rotation="90"] { --arrow-rotation: 90deg; }
-.arrow-token[data-rotation="110"] { --arrow-rotation: 110deg; }
-.arrow-token[data-rotation="120"] { --arrow-rotation: 120deg; }
-.arrow-token[data-rotation="130"] { --arrow-rotation: 130deg; }
-.arrow-token[data-rotation="135"] { --arrow-rotation: 135deg; }
-.arrow-token[data-rotation="140"] { --arrow-rotation: 140deg; }
-.arrow-token[data-rotation="150"] { --arrow-rotation: 150deg; }
-.arrow-token[data-rotation="160"] { --arrow-rotation: 160deg; }
-.arrow-token[data-rotation="180"] { --arrow-rotation: 180deg; }
-.arrow-token[data-rotation="200"] { --arrow-rotation: 200deg; }
-.arrow-token[data-rotation="210"] { --arrow-rotation: 210deg; }
-.arrow-token[data-rotation="220"] { --arrow-rotation: 220deg; }
-.arrow-token[data-rotation="225"] { --arrow-rotation: 225deg; }
-.arrow-token[data-rotation="230"] { --arrow-rotation: 230deg; }
-.arrow-token[data-rotation="240"] { --arrow-rotation: 240deg; }
-.arrow-token[data-rotation="250"] { --arrow-rotation: 250deg; }
-.arrow-token[data-rotation="270"] { --arrow-rotation: 270deg; }
-.arrow-token[data-rotation="290"] { --arrow-rotation: 290deg; }
-.arrow-token[data-rotation="300"] { --arrow-rotation: 300deg; }
-.arrow-token[data-rotation="310"] { --arrow-rotation: 310deg; }
-.arrow-token[data-rotation="315"] { --arrow-rotation: 315deg; }
-.arrow-token[data-rotation="320"] { --arrow-rotation: 320deg; }
-.arrow-token[data-rotation="330"] { --arrow-rotation: 330deg; }
-.arrow-token[data-rotation="340"] { --arrow-rotation: 340deg; }
+.arrow-token__marker {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 7px;
+    height: 7px;
+    border: 1px solid var(--sheet);
+    border-radius: 50%;
+    background: currentcolor;
+}
+
+.arrow-token[data-frame="round"] {
+    border-radius: 50%;
+}
+
+.arrow-token[data-frame="square"] {
+    border-radius: 0;
+}
+
+.arrow-token[data-rotation="0"],
+.symbol-token[data-rotation="0"] { --arrow-rotation: 0deg; }
+.arrow-token[data-rotation="15"],
+.symbol-token[data-rotation="15"] { --arrow-rotation: 15deg; }
+.arrow-token[data-rotation="20"],
+.symbol-token[data-rotation="20"] { --arrow-rotation: 20deg; }
+.arrow-token[data-rotation="30"],
+.symbol-token[data-rotation="30"] { --arrow-rotation: 30deg; }
+.arrow-token[data-rotation="40"],
+.symbol-token[data-rotation="40"] { --arrow-rotation: 40deg; }
+.arrow-token[data-rotation="45"],
+.symbol-token[data-rotation="45"] { --arrow-rotation: 45deg; }
+.arrow-token[data-rotation="50"],
+.symbol-token[data-rotation="50"] { --arrow-rotation: 50deg; }
+.arrow-token[data-rotation="60"],
+.symbol-token[data-rotation="60"] { --arrow-rotation: 60deg; }
+.arrow-token[data-rotation="70"],
+.symbol-token[data-rotation="70"] { --arrow-rotation: 70deg; }
+.arrow-token[data-rotation="75"],
+.symbol-token[data-rotation="75"] { --arrow-rotation: 75deg; }
+.arrow-token[data-rotation="90"],
+.symbol-token[data-rotation="90"] { --arrow-rotation: 90deg; }
+.arrow-token[data-rotation="105"],
+.symbol-token[data-rotation="105"] { --arrow-rotation: 105deg; }
+.arrow-token[data-rotation="110"],
+.symbol-token[data-rotation="110"] { --arrow-rotation: 110deg; }
+.arrow-token[data-rotation="120"],
+.symbol-token[data-rotation="120"] { --arrow-rotation: 120deg; }
+.arrow-token[data-rotation="130"],
+.symbol-token[data-rotation="130"] { --arrow-rotation: 130deg; }
+.arrow-token[data-rotation="135"],
+.symbol-token[data-rotation="135"] { --arrow-rotation: 135deg; }
+.arrow-token[data-rotation="140"],
+.symbol-token[data-rotation="140"] { --arrow-rotation: 140deg; }
+.arrow-token[data-rotation="150"],
+.symbol-token[data-rotation="150"] { --arrow-rotation: 150deg; }
+.arrow-token[data-rotation="160"],
+.symbol-token[data-rotation="160"] { --arrow-rotation: 160deg; }
+.arrow-token[data-rotation="165"],
+.symbol-token[data-rotation="165"] { --arrow-rotation: 165deg; }
+.arrow-token[data-rotation="180"],
+.symbol-token[data-rotation="180"] { --arrow-rotation: 180deg; }
+.arrow-token[data-rotation="195"],
+.symbol-token[data-rotation="195"] { --arrow-rotation: 195deg; }
+.arrow-token[data-rotation="200"],
+.symbol-token[data-rotation="200"] { --arrow-rotation: 200deg; }
+.arrow-token[data-rotation="210"],
+.symbol-token[data-rotation="210"] { --arrow-rotation: 210deg; }
+.arrow-token[data-rotation="220"],
+.symbol-token[data-rotation="220"] { --arrow-rotation: 220deg; }
+.arrow-token[data-rotation="225"],
+.symbol-token[data-rotation="225"] { --arrow-rotation: 225deg; }
+.arrow-token[data-rotation="230"],
+.symbol-token[data-rotation="230"] { --arrow-rotation: 230deg; }
+.arrow-token[data-rotation="240"],
+.symbol-token[data-rotation="240"] { --arrow-rotation: 240deg; }
+.arrow-token[data-rotation="250"],
+.symbol-token[data-rotation="250"] { --arrow-rotation: 250deg; }
+.arrow-token[data-rotation="255"],
+.symbol-token[data-rotation="255"] { --arrow-rotation: 255deg; }
+.arrow-token[data-rotation="270"],
+.symbol-token[data-rotation="270"] { --arrow-rotation: 270deg; }
+.arrow-token[data-rotation="285"],
+.symbol-token[data-rotation="285"] { --arrow-rotation: 285deg; }
+.arrow-token[data-rotation="290"],
+.symbol-token[data-rotation="290"] { --arrow-rotation: 290deg; }
+.arrow-token[data-rotation="300"],
+.symbol-token[data-rotation="300"] { --arrow-rotation: 300deg; }
+.arrow-token[data-rotation="310"],
+.symbol-token[data-rotation="310"] { --arrow-rotation: 310deg; }
+.arrow-token[data-rotation="315"],
+.symbol-token[data-rotation="315"] { --arrow-rotation: 315deg; }
+.arrow-token[data-rotation="320"],
+.symbol-token[data-rotation="320"] { --arrow-rotation: 320deg; }
+.arrow-token[data-rotation="330"],
+.symbol-token[data-rotation="330"] { --arrow-rotation: 330deg; }
+.arrow-token[data-rotation="340"],
+.symbol-token[data-rotation="340"] { --arrow-rotation: 340deg; }
+.arrow-token[data-rotation="345"],
+.symbol-token[data-rotation="345"] { --arrow-rotation: 345deg; }
 
 .arrow-row[data-columns] {
     display: grid;
@@ -1101,6 +1170,23 @@ kbd {
     min-width: 0;
 }
 
+.symbol-sequence[data-columns] {
+    display: grid;
+    grid-template-columns: repeat(
+        var(--symbol-columns, 3),
+        minmax(0, 1fr)
+    );
+    width: 100%;
+    max-width: 176px;
+    gap: clamp(4px, 1.1vw, 8px);
+}
+
+.symbol-sequence[data-columns="2"] { --symbol-columns: 2; }
+.symbol-sequence[data-columns="3"] { --symbol-columns: 3; }
+.symbol-sequence[data-columns="4"] { --symbol-columns: 4; }
+.symbol-sequence[data-columns="5"] { --symbol-columns: 5; }
+.symbol-sequence[data-columns="6"] { --symbol-columns: 6; }
+
 .symbol-token {
     display: grid;
     place-items: center;
@@ -1112,6 +1198,22 @@ kbd {
     font-family: var(--mono);
     font-size: clamp(1.4rem, 4vw, 2.6rem);
     line-height: 1;
+}
+
+.symbol-sequence[data-columns] .symbol-token {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    aspect-ratio: 1;
+    font-size: clamp(1.15rem, 3.6vw, 2.15rem);
+}
+
+.symbol-token__glyph {
+    display: block;
+    line-height: 1;
+    transform: rotate(var(--arrow-rotation, 0deg));
+    transform-origin: center;
 }
 
 .symbol-token:only-child {

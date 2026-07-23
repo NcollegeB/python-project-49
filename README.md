@@ -4,9 +4,11 @@ BrainHacker is a deliberately simple, paper-inspired browser home for ten
 endless brain games plus a mixed Culmination Test. Every correct answer adds
 one point, every mistake costs one of three lives, and the run ends when no
 lives remain. Every three correct answers advances one of five difficulty
-levels; misses do not erase level progress, and level 5 continues for as long
-as the player can survive. Create an account to keep a personal best for every
-test, or play without an account under a temporary display name.
+levels in most tests; Direction Focus, Symbol Match, and the Culmination Test
+continue through eight. Misses do not erase level progress, and the final
+level continues for as long as the player can survive. Create an account to
+keep a personal best for every test, or play without an account under a
+temporary display name.
 
 The original `brain-games` terminal hub remains available with the same games,
 three-life rules, and persistent leaderboard.
@@ -54,11 +56,11 @@ ranked score table. Number Memory still uses its intentional preview phase in
 every mode.
 
 BrainHacker does not use the live leaderboard to calculate statistics. Every
-game has five fixed reference round-accuracy assumptions, one for each
+game has one fixed reference round-accuracy assumption for each configured
 difficulty level. The model advances after every three correct answers,
-continues indefinitely at level 5, and ends after three total misses. It
-calculates a deterministic score distribution for those rules, then reports
-the expected average and the cumulative probability for a score as a
+continues indefinitely at the final level, and ends after three total misses.
+It calculates a deterministic score distribution for those rules, then
+reports the expected average and the cumulative probability for a score as a
 percentile rank out of 100.
 
 These are **BrainHacker benchmarks**: stable product baselines for comparison,

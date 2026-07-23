@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from brain_games.benchmarks import BENCHMARK_DISCLAIMER
 from brain_games.benchmarks import BENCHMARK_METHOD
@@ -10,6 +11,7 @@ from brain_games.benchmarks import _average_score
 from brain_games.benchmarks import _rank_out_of_100
 from brain_games.benchmarks import all_benchmarks
 from brain_games.benchmarks import benchmark_for
+from brain_games.difficulty import max_level_for
 from brain_games.games.catalog import CORE_GAMES
 from brain_games.web_engine import MAX_LIVES
 
@@ -42,6 +44,7 @@ class BenchmarkCatalogTest(unittest.TestCase):
             'method',
             'misses_before_end',
             'correct_per_level',
+            'max_level',
             'level_accuracies',
             'level_accuracy_percents',
             'average_score',
@@ -64,9 +67,22 @@ class BenchmarkCatalogTest(unittest.TestCase):
                 )
                 self.assertEqual(BENCHMARK_DISCLAIMER, item['disclaimer'])
                 self.assertIn('not measured population', item['disclaimer'])
-                self.assertIn('five levels', item['methodology'])
-                self.assertEqual(5, len(item['level_accuracies']))
-                self.assertEqual(5, len(item['level_accuracy_percents']))
+                self.assertIn(
+                    'configured difficulty level',
+                    item['methodology'],
+                )
+                self.assertEqual(
+                    max_level_for(item['slug']),
+                    item['max_level'],
+                )
+                self.assertEqual(
+                    item['max_level'],
+                    len(item['level_accuracies']),
+                )
+                self.assertEqual(
+                    item['max_level'],
+                    len(item['level_accuracy_percents']),
+                )
                 self.assertTrue(all(
                     0.0 < accuracy < 1.0
                     for accuracy in item['level_accuracies']
@@ -110,10 +126,10 @@ class BenchmarkCalculationTest(unittest.TestCase):
             'prime': 8.9,
             'number-memory': 9.3,
             'verbal-memory': 13.3,
-            'direction-focus': 11.2,
-            'symbol-match': 12.4,
+            'direction-focus': 11.1,
+            'symbol-match': 12.3,
             'word-scramble': 8.9,
-            'culmination': 10.0,
+            'culmination': 9.9,
         }
         self.assertEqual(expected_averages, {
             item['slug']: item['average_score']
@@ -122,10 +138,11 @@ class BenchmarkCalculationTest(unittest.TestCase):
 
     def test_constant_accuracy_reduces_to_negative_binomial_mean(self):
         self.assertAlmostEqual(3.0, _average_score((0.5,) * 5))
+        self.assertAlmostEqual(3.0, _average_score((0.5,) * 8))
 
     def test_model_rejects_invalid_reference_accuracy_specs(self):
         invalid_specs = (
-            (0.5,) * 4,
+            (),
             (0.5, 0.5, 0.0, 0.5, 0.5),
             (0.5, 0.5, 1.0, 0.5, 0.5),
             (0.5, 0.5, float('nan'), 0.5, 0.5),
@@ -134,6 +151,15 @@ class BenchmarkCalculationTest(unittest.TestCase):
             with self.subTest(spec=spec):
                 with self.assertRaises(ValueError):
                     _average_score(spec)
+
+    def test_public_benchmark_requires_one_accuracy_per_authored_level(self):
+        with mock.patch(
+                'brain_games.benchmarks.max_level_for',
+                return_value=6):
+            with self.assertRaisesRegex(
+                    ValueError,
+                    'even requires 6 reference accuracies'):
+                benchmark_for('even')
 
     def test_rank_rounding_is_conventional_half_up(self):
         # At score zero with p=.5, the CDF is .5 ** 3 = 12.5%.

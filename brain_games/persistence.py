@@ -38,7 +38,7 @@ from brain_games.accounts import AccountError
 from brain_games.accounts import DuplicateAccountError
 from brain_games.accounts import normalize_username
 from brain_games.difficulty import CORRECT_PER_LEVEL
-from brain_games.difficulty import MAX_LEVEL
+from brain_games.difficulty import max_level_for
 from brain_games.leaderboard import Leaderboard
 from brain_games.web_engine import _RunState
 from brain_games.web_engine import MAX_LIVES
@@ -49,7 +49,7 @@ from brain_games.web_engine import TIMING_MODES
 from brain_games.web_engine import UnknownRunError
 
 
-RUN_STATE_VERSION = 2
+RUN_STATE_VERSION = 3
 DEFAULT_RUN_TTL = timedelta(hours=24)
 SCHEMA_LOCK_ID = 1878774371
 PLAYER_KEY_LENGTH = MAX_PLAYER_LENGTH * 3
@@ -491,7 +491,7 @@ def _snapshot_integers_are_valid(payload):
         return False
     if not 0 <= payload['lives'] <= MAX_LIVES:
         return False
-    if not 1 <= payload['level'] <= MAX_LEVEL:
+    if not 1 <= payload['level'] <= max_level_for(payload['game_slug']):
         return False
     return 0 <= payload['level_progress'] < CORRECT_PER_LEVEL
 

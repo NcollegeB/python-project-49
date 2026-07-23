@@ -6,7 +6,10 @@ import random
 NAME = 'Direction Focus'
 SLUG = 'direction-focus'
 CATEGORY = 'Attention'
-RULES = 'Name the odd arrow: up/down/left/right or u/d/l/r.'
+RULES = (
+    'Find the unique arrow or feature combination, then answer its '
+    'direction: up/down/left/right or u/d/l/r.'
+)
 ANSWER_ALIASES = {
     'u': 'up',
     'd': 'down',

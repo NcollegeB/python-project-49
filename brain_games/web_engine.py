@@ -17,7 +17,7 @@ from brain_games.difficulty import CORRECT_PER_LEVEL
 from brain_games.difficulty import DIRECTION_DIFFERENCES_DEG
 from brain_games.difficulty import DIRECTION_ITEM_COUNTS
 from brain_games.difficulty import difficulty_label
-from brain_games.difficulty import MAX_LEVEL
+from brain_games.difficulty import max_level_for
 from brain_games.difficulty import number_memory_digits
 from brain_games.difficulty import number_memory_preview_ms
 from brain_games.difficulty import SYMBOL_SEQUENCE_LENGTHS
@@ -44,7 +44,7 @@ MAX_LIVES = 3
 CULMINATION_SLUG = 'culmination'
 DEFAULT_MAX_RUNS = 512
 MAX_PLAYER_LENGTH = 64
-SCORE_RULESET = 'r2'
+SCORE_RULESET = 'r3'
 SCORE_GAME_PREFIX = '{}:'.format(SCORE_RULESET)
 TIMING_MODES = ('standard', 'relaxed', 'self-paced')
 
@@ -106,6 +106,7 @@ def _catalog_entry(game, description, icon):
         'rules': game.RULES,
         'description': description,
         'icon': icon,
+        'max_level': max_level_for(game.SLUG),
     }
 
 
@@ -147,12 +148,12 @@ GAME_CATALOG = (
     ),
     _catalog_entry(
         brain_direction_focus,
-        'Spot the one arrow pointing in a different direction.',
+        'Find the unique direction, frame, or marker combination.',
         '→',
     ),
     _catalog_entry(
         brain_symbol_match,
-        'Quickly decide whether two symbols match.',
+        'Compare symbols, arrow sequences, and rotated grids.',
         '◇',
     ),
     _catalog_entry(
@@ -169,6 +170,7 @@ GAME_CATALOG = (
         ),
         'description': 'Take on all ten challenges in shuffled cycles.',
         'icon': '★',
+        'max_level': max_level_for(CULMINATION_SLUG),
     },
 )
 
@@ -829,7 +831,7 @@ class RunStore:
             return level_before, False
 
         state.level_progress = 0
-        if state.level >= MAX_LEVEL:
+        if state.level >= max_level_for(state.game_slug):
             return level_before, False
 
         state.level += 1
@@ -922,7 +924,7 @@ class RunStore:
             'level': state.level,
             'level_progress': state.level_progress,
             'level_goal': CORRECT_PER_LEVEL,
-            'max_level': MAX_LEVEL,
+            'max_level': max_level_for(state.game_slug),
             'ranked': state.ranked,
             'timing_mode': state.timing_mode,
             'ended': state.ended,
@@ -939,13 +941,18 @@ class RunStore:
             cycle_position = None
             cycle_total = None
 
-        generated = self._generate_source_round(state, source_slug)
+        source_level = min(state.level, max_level_for(source_slug))
+        generated = self._generate_source_round(
+            state,
+            source_slug,
+            source_level,
+        )
         source = _CATALOG_BY_SLUG[source_slug]
         choices = list(generated.get('choices', []))
         preview_ms = int(generated.get('preview_ms', 0))
         base_time_limit_ms = int(generated.get(
             'time_limit_ms',
-            time_limit_ms(source_slug, state.level),
+            time_limit_ms(source_slug, source_level),
         ))
         round_time_limit_ms = self._scaled_time_limit(
             base_time_limit_ms,
@@ -963,11 +970,12 @@ class RunStore:
             'choices': choices,
             'preview_ms': preview_ms,
             'level': state.level,
-            'difficulty_label': difficulty_label(state.level),
+            'difficulty_label': difficulty_label(source_level),
             'time_limit_ms': round_time_limit_ms,
             'hidden_prompt': generated.get('hidden_prompt'),
             'cycle_position': cycle_position,
             'cycle_total': cycle_total,
+            'source_level': source_level,
         }
         return {
             'public': public,
@@ -1007,7 +1015,9 @@ class RunStore:
         state.cycle_position += 1
         return source_slug, state.cycle_position
 
-    def _generate_source_round(self, state, source_slug):
+    def _generate_source_round(self, state, source_slug, level=None):
+        if level is None:
+            level = min(state.level, max_level_for(source_slug))
         generators = {
             brain_even.SLUG: self._generate_even,
             brain_calc.SLUG: self._generate_calc,
@@ -1020,11 +1030,12 @@ class RunStore:
             brain_symbol_match.SLUG: self._generate_symbol_match,
             brain_word_scramble.SLUG: self._generate_word_scramble,
         }
-        return generators[source_slug](state)
+        return generators[source_slug](state, level)
 
     @staticmethod
-    def _next_balanced_truth(state, source_slug):
-        key = '{}:{}'.format(source_slug, state.level)
+    def _next_balanced_truth(state, source_slug, level=None):
+        effective_level = state.level if level is None else level
+        key = '{}:{}'.format(source_slug, effective_level)
         bag = state.truth_bags.setdefault(key, [])
         if not bag:
             bag.extend((True, False))
@@ -1032,10 +1043,12 @@ class RunStore:
         return bag.pop()
 
     @staticmethod
-    def _generate_even(state):
+    def _generate_even(state, level=None):
+        level = state.level if level is None else level
         wants_even = RunStore._next_balanced_truth(
             state,
             brain_even.SLUG,
+            level,
         )
         desired_parity = 0 if wants_even else 1
         generators = (
@@ -1046,7 +1059,7 @@ class RunStore:
             RunStore._even_level_four,
             RunStore._even_level_five,
         )
-        expression, data = generators[state.level](
+        expression, data = generators[level](
             state,
             desired_parity,
         )
@@ -1160,7 +1173,8 @@ class RunStore:
         }
 
     @staticmethod
-    def _generate_calc(state):
+    def _generate_calc(state, level=None):
+        level = state.level if level is None else level
         generators = (
             None,
             RunStore._calc_level_one,
@@ -1169,7 +1183,7 @@ class RunStore:
             RunStore._calc_level_four,
             RunStore._calc_level_five,
         )
-        expression, answer, template = generators[state.level](state)
+        expression, answer, template = generators[level](state)
         return {
             'kind': 'number',
             'prompt': expression,
@@ -1377,7 +1391,8 @@ class RunStore:
         return expression, product + addition - subtraction
 
     @staticmethod
-    def _generate_gcd(state):
+    def _generate_gcd(state, level=None):
+        level = state.level if level is None else level
         generators = (
             None,
             RunStore._gcd_level_one,
@@ -1386,7 +1401,7 @@ class RunStore:
             RunStore._gcd_level_four,
             RunStore._gcd_level_five,
         )
-        first, second = generators[state.level](state)
+        first, second = generators[level](state)
         if state.rng.choice((True, False)):
             first, second = second, first
         answer = gcd(first, second)
@@ -1472,7 +1487,8 @@ class RunStore:
         )
 
     @staticmethod
-    def _generate_progression(state):
+    def _generate_progression(state, level=None):
+        level = state.level if level is None else level
         generators = (
             None,
             RunStore._progression_level_one,
@@ -1486,7 +1502,7 @@ class RunStore:
             hidden_index,
             pattern,
             pattern_label,
-        ) = generators[state.level](state)
+        ) = generators[level](state)
 
         answer = sequence[hidden_index]
         visible = [str(value) for value in sequence]
@@ -1588,12 +1604,14 @@ class RunStore:
         )
 
     @staticmethod
-    def _generate_prime(state):
+    def _generate_prime(state, level=None):
+        level = state.level if level is None else level
         is_prime = RunStore._next_balanced_truth(
             state,
             brain_prime.SLUG,
+            level,
         )
-        number = state.rng.choice(_PRIME_POOLS[state.level][is_prime])
+        number = state.rng.choice(_PRIME_POOLS[level][is_prime])
         return {
             'kind': 'choice',
             'prompt': 'Is {} prime?'.format(number),
@@ -1604,9 +1622,10 @@ class RunStore:
         }
 
     @staticmethod
-    def _generate_number_memory(state):
+    def _generate_number_memory(state, level=None):
+        level = state.level if level is None else level
         digits = number_memory_digits(
-            state.level,
+            level,
             state.level_progress,
         )
         lower_bound = 10 ** (digits - 1)
@@ -1623,8 +1642,9 @@ class RunStore:
         }
 
     @staticmethod
-    def _generate_verbal_memory(state):
-        level_index = state.level - 1
+    def _generate_verbal_memory(state, level=None):
+        level = state.level if level is None else level
+        level_index = level - 1
         history_window = VERBAL_HISTORY_WINDOWS[level_index]
         configured_lag = VERBAL_REPEAT_LAGS[level_index]
         minimum_lag = configured_lag
@@ -1640,9 +1660,10 @@ class RunStore:
         ask_seen = RunStore._next_verbal_truth(
             state,
             seen_percentage,
+            level,
         )
         if ask_seen and not repeat_words:
-            RunStore._defer_verbal_truth(state, ask_seen)
+            RunStore._defer_verbal_truth(state, ask_seen, level)
             ask_seen = False
         if ask_seen:
             word = state.rng.choice(repeat_words)
@@ -1672,8 +1693,9 @@ class RunStore:
         }
 
     @staticmethod
-    def _next_verbal_truth(state, seen_percentage):
-        key = 'verbal-memory:{}'.format(state.level)
+    def _next_verbal_truth(state, seen_percentage, level=None):
+        effective_level = state.level if level is None else level
+        key = 'verbal-memory:{}'.format(effective_level)
         bag = state.truth_bags.setdefault(key, [])
         if not bag:
             seen_count = (seen_percentage * 20) // 100
@@ -1683,8 +1705,9 @@ class RunStore:
         return bag.pop()
 
     @staticmethod
-    def _defer_verbal_truth(state, truth):
-        key = 'verbal-memory:{}'.format(state.level)
+    def _defer_verbal_truth(state, truth, level=None):
+        effective_level = state.level if level is None else level
+        key = 'verbal-memory:{}'.format(effective_level)
         state.truth_bags.setdefault(key, []).insert(0, truth)
 
     @staticmethod
@@ -1729,77 +1752,206 @@ class RunStore:
         return ' '.join(words)
 
     @staticmethod
-    def _generate_direction_focus(state):
-        level_index = state.level - 1
+    def _generate_direction_focus(state, level=None):
+        level = state.level if level is None else level
+        level_index = level - 1
         item_count = DIRECTION_ITEM_COUNTS[level_index]
         difference = DIRECTION_DIFFERENCES_DEG[level_index]
         target = state.rng.choice(tuple(_DIRECTION_ANGLES))
         target_angle = _DIRECTION_ANGLES[target]
-        orientation_count = (1, 1, 2, 2, 3)[level_index]
-        if orientation_count == 1:
-            sign = state.rng.choice((-1, 1))
-            distractor_angles = (
-                (target_angle + (sign * difference)) % 360,
-            )
-        elif orientation_count == 2:
-            distractor_angles = (
-                (target_angle - difference) % 360,
-                (target_angle + difference) % 360,
-            )
-        else:
-            third_sign = state.rng.choice((-1, 1))
-            third_offset = third_sign * difference * 2
-            distractor_angles = (
-                (target_angle - difference) % 360,
-                (target_angle + difference) % 360,
-                (target_angle + third_offset) % 360,
-            )
 
-        rotations = [
-            distractor_angles[index % orientation_count]
-            for index in range(item_count - 1)
-        ]
-        state.rng.shuffle(rotations)
-        target_index = state.rng.randrange(item_count)
-        rotations.insert(target_index, target_angle)
-        arrows = [
-            RunStore._arrow_for_angle(rotation)
-            for rotation in rotations
-        ]
-        accessible_sequence = [
-            RunStore._accessible_arrow_label(rotation)
-            for rotation in rotations
-        ]
-        if difference % 45 == 0:
-            prompt = 'Find the odd arrow: {}'.format('  '.join(arrows))
-        else:
+        if level <= 4:
+            items = RunStore._direction_orientation_items(
+                state,
+                level,
+                item_count,
+                target_angle,
+                difference,
+            )
+            feature_count = 1
+            instruction = 'Which way does the odd arrow point?'
             prompt = 'Find the one arrow pointing in a different direction.'
+            task_mode = 'orientation'
+        elif level <= 6:
+            items = RunStore._direction_conjunction_items(
+                state,
+                item_count,
+                target_angle,
+                difference,
+                feature_count=2,
+            )
+            feature_count = 2
+            instruction = (
+                'Find the only direction-and-frame combination. '
+                'Which way does it point?'
+            )
+            prompt = instruction
+            task_mode = 'two_feature_conjunction'
+        else:
+            items = RunStore._direction_conjunction_items(
+                state,
+                item_count,
+                target_angle,
+                difference,
+                feature_count=3,
+            )
+            feature_count = 3
+            instruction = (
+                'Find the only direction, frame, and dot combination. '
+                'Which way does it point?'
+            )
+            prompt = instruction
+            task_mode = 'three_feature_conjunction'
+
+        state.rng.shuffle(items)
+        rotations = [item['rotation_deg'] for item in items]
+        accessible_sequence = [
+            item['accessible_label']
+            for item in items
+        ]
         return {
             'kind': 'direction',
             'prompt': prompt,
             'expected_answer': target,
             'data': {
-                'arrows': arrows,
+                'arrows': [
+                    RunStore._arrow_for_angle(rotation)
+                    for rotation in rotations
+                ],
                 'rotations': rotations,
                 'accessible_sequence': accessible_sequence,
-                'items': [
-                    {
-                        'glyph': '↑',
-                        'rotation_deg': rotation,
-                        'accessible_label': accessible_label,
-                    }
-                    for rotation, accessible_label in zip(
-                        rotations,
-                        accessible_sequence,
-                    )
-                ],
+                'items': items,
                 'item_count': item_count,
                 'grid_columns': isqrt(item_count - 1) + 1,
                 'target_difference_deg': difference,
-                'distractor_orientation_count': orientation_count,
+                'distractor_orientation_count': len(set(
+                    rotation
+                    for rotation in rotations
+                    if rotation != target_angle
+                )),
+                'feature_count': feature_count,
+                'task_mode': task_mode,
+                'instruction': instruction,
+                'accessible_instruction': instruction,
             },
             'choices': list(_DIRECTION_ANGLES),
             'aliases': brain_direction_focus.ANSWER_ALIASES,
+        }
+
+    @staticmethod
+    def _direction_orientation_items(
+            state,
+            level,
+            item_count,
+            target_angle,
+            difference,
+    ):
+        orientation_count = (1, 1, 2, 2)[level - 1]
+        if orientation_count == 1:
+            sign = state.rng.choice((-1, 1))
+            distractor_angles = (
+                (target_angle + (sign * difference)) % 360,
+            )
+        else:
+            distractor_angles = (
+                (target_angle - difference) % 360,
+                (target_angle + difference) % 360,
+            )
+        rotations = [
+            distractor_angles[index % orientation_count]
+            for index in range(item_count - 1)
+        ]
+        rotations.append(target_angle)
+        return [
+            RunStore._direction_item(rotation, 'square', 'none')
+            for rotation in rotations
+        ]
+
+    @staticmethod
+    def _direction_conjunction_items(
+            state,
+            item_count,
+            target_angle,
+            difference,
+            feature_count,
+    ):
+        clockwise_angle = (
+            target_angle + (state.rng.choice((-1, 1)) * difference)
+        ) % 360
+        counter_angle = (
+            target_angle - (clockwise_angle - target_angle)
+        ) % 360
+        target_frame = state.rng.choice(('round', 'square'))
+        alternate_frame = (
+            'square' if target_frame == 'round' else 'round'
+        )
+        target_marker = (
+            'none'
+            if feature_count == 2
+            else state.rng.choice(('dot', 'none'))
+        )
+        alternate_marker = (
+            'none' if target_marker == 'dot' else 'dot'
+        )
+        target_features = (
+            target_angle,
+            target_frame,
+            target_marker,
+        )
+        items = [RunStore._direction_item(*target_features)]
+
+        if feature_count == 2:
+            counts = (
+                (7, 5, 3, 6, 2)
+                if item_count == 24
+                else (11, 8, 4, 9, 3)
+            )
+            combinations = (
+                (target_angle, alternate_frame, target_marker),
+                (clockwise_angle, target_frame, target_marker),
+                (clockwise_angle, alternate_frame, target_marker),
+                (counter_angle, target_frame, target_marker),
+                (counter_angle, alternate_frame, target_marker),
+            )
+        else:
+            alternate_angle = clockwise_angle
+            combinations = (
+                (target_angle, target_frame, alternate_marker),
+                (target_angle, alternate_frame, target_marker),
+                (alternate_angle, target_frame, target_marker),
+                (target_angle, alternate_frame, alternate_marker),
+                (alternate_angle, target_frame, alternate_marker),
+                (alternate_angle, alternate_frame, target_marker),
+                (alternate_angle, alternate_frame, alternate_marker),
+            )
+            counts = (6, 6, 6, 5, 5, 5, 2)
+
+        for features, count in zip(combinations, counts):
+            items.extend(
+                RunStore._direction_item(*features)
+                for _index in range(count)
+            )
+        if len(items) != item_count:
+            raise AssertionError('direction conjunction size mismatch')
+        return items
+
+    @staticmethod
+    def _direction_item(rotation, frame, marker):
+        direction_label = RunStore._accessible_arrow_label(rotation)
+        frame_label = '{} frame'.format(frame)
+        marker_label = (
+            'with corner dot' if marker == 'dot' else 'without corner dot'
+        )
+        return {
+            'glyph': '↑',
+            'rotation_deg': rotation,
+            'frame': frame,
+            'marker': marker,
+            'accessible_label': '{}, {}, {}'.format(
+                direction_label,
+                frame_label,
+                marker_label,
+            ),
         }
 
     @staticmethod
@@ -1821,80 +1973,259 @@ class RunStore:
         )
 
     @staticmethod
-    def _generate_symbol_match(state):
-        sequence_length = SYMBOL_SEQUENCE_LENGTHS[state.level - 1]
-        if state.level <= 3:
-            token_pool = _SYMBOL_STANDARD_TOKENS
-        elif state.level == 4:
-            token_pool = _SYMBOL_ROTATION_TOKENS
-        else:
-            token_pool = _SYMBOL_MARK_TOKENS
-        left = [
-            state.rng.choice(token_pool)
-            for _index in range(sequence_length)
-        ]
-        right = list(left)
+    def _generate_symbol_match(state, level=None):
+        level = state.level if level is None else level
+        sequence_length = SYMBOL_SEQUENCE_LENGTHS[level - 1]
         matches = RunStore._next_balanced_truth(
             state,
             brain_symbol_match.SLUG,
+            level,
         )
-        mismatch_index = None
-        mismatch_kind = None
-        if not matches:
-            mismatch_index = state.rng.randrange(sequence_length)
-            mismatch_kind, right[mismatch_index] = (
-                RunStore._symbol_mismatch(
+
+        if level <= 3:
+            left_tokens, right_tokens = RunStore._basic_symbol_sequences(
+                state,
+                level,
+                sequence_length,
+                matches,
+            )
+            instruction = 'Do these symbol sequences match exactly?'
+            comparison_rule = 'exact'
+            transform_degrees = 0
+            pattern_columns = None
+        elif level <= 6:
+            left_tokens, right_tokens = RunStore._arrow_symbol_sequences(
+                state,
+                level,
+                sequence_length,
+                matches,
+            )
+            instruction = 'Do these arrow sequences match exactly?'
+            comparison_rule = 'exact'
+            transform_degrees = 0
+            pattern_columns = None
+        elif level == 7:
+            transform_degrees = state.rng.choice((90, 180, 270))
+            left_tokens, right_tokens = (
+                RunStore._rotated_arrow_sequences(
                     state,
-                    left[mismatch_index],
+                    sequence_length,
+                    transform_degrees,
+                    matches,
                 )
             )
-        left_display = ' '.join(left)
-        right_display = ' '.join(right)
+            instruction = (
+                'After rotating every left arrow {}° clockwise, '
+                'do the sequences match?'
+            ).format(transform_degrees)
+            comparison_rule = 'global_rotation'
+            pattern_columns = None
+        else:
+            transform_degrees = state.rng.choice((90, 180, 270))
+            left_tokens, right_tokens = RunStore._rotated_arrow_grids(
+                state,
+                transform_degrees,
+                matches,
+            )
+            instruction = (
+                'After rotating the entire left grid {}° clockwise, '
+                'do the grids match?'
+            ).format(transform_degrees)
+            comparison_rule = 'grid_rotation'
+            pattern_columns = 3
+
+        left_symbols = [token['symbol'] for token in left_tokens]
+        right_symbols = [token['symbol'] for token in right_tokens]
+        data = {
+            'symbols': [left_symbols, right_symbols],
+            'left_symbols': left_symbols,
+            'right_symbols': right_symbols,
+            'sequence_length': sequence_length,
+            'left_tokens': left_tokens,
+            'right_tokens': right_tokens,
+            'comparison_rule': comparison_rule,
+            'transform_degrees': transform_degrees,
+            'instruction': instruction,
+        }
+        if pattern_columns is not None:
+            data['pattern_columns'] = pattern_columns
         return {
             'kind': 'choice',
-            'prompt': 'Symbols: {}  |  {}. Same?'.format(
-                left_display,
-                right_display,
-            ),
+            'prompt': instruction,
             'expected_answer': 'yes' if matches else 'no',
-            'data': {
-                'symbols': [left_display, right_display],
-                'left_symbols': left,
-                'right_symbols': right,
-                'sequence_length': sequence_length,
-                'left_tokens': [
-                    RunStore._public_symbol_token(symbol)
-                    for symbol in left
-                ],
-                'right_tokens': [
-                    RunStore._public_symbol_token(symbol)
-                    for symbol in right
-                ],
-            },
+            'data': data,
             'choices': ['yes', 'no'],
             'aliases': brain_symbol_match.ANSWER_ALIASES,
         }
 
     @staticmethod
+    def _basic_symbol_sequences(state, level, sequence_length, matches):
+        left = [
+            state.rng.choice(_SYMBOL_STANDARD_TOKENS)
+            for _index in range(sequence_length)
+        ]
+        right = list(left)
+        if not matches:
+            mismatch_index = state.rng.randrange(sequence_length)
+            _kind, right[mismatch_index] = RunStore._symbol_mismatch(
+                state,
+                left[mismatch_index],
+                level,
+            )
+        return (
+            [RunStore._public_symbol_token(symbol) for symbol in left],
+            [RunStore._public_symbol_token(symbol) for symbol in right],
+        )
+
+    @staticmethod
+    def _arrow_symbol_sequences(state, level, sequence_length, matches):
+        angle_step = {
+            4: 90,
+            5: 45,
+            6: 15,
+        }[level]
+        angle_pool = tuple(range(0, 360, angle_step))
+        if level == 6:
+            start = state.rng.choice(angle_pool)
+            left_angles = [
+                (start + (index * angle_step)) % 360
+                for index in range(sequence_length)
+            ]
+        else:
+            left_angles = []
+            while len(left_angles) < sequence_length:
+                cycle = list(angle_pool)
+                state.rng.shuffle(cycle)
+                left_angles.extend(cycle)
+            left_angles = left_angles[:sequence_length]
+        state.rng.shuffle(left_angles)
+        right_angles = list(left_angles)
+        if not matches:
+            candidates = [
+                (index, (angle + angle_step) % 360)
+                for index, angle in enumerate(left_angles)
+                if (angle + angle_step) % 360 in left_angles
+            ]
+            mismatch_index, replacement = state.rng.choice(candidates)
+            right_angles[mismatch_index] = replacement
+        return (
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in left_angles
+            ],
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in right_angles
+            ],
+        )
+
+    @staticmethod
+    def _rotated_arrow_sequences(
+            state,
+            sequence_length,
+            transform_degrees,
+            matches,
+    ):
+        angle_pool = tuple(range(0, 360, 45))
+        left_angles = [
+            state.rng.choice(angle_pool)
+            for _index in range(sequence_length)
+        ]
+        right_angles = [
+            (angle + transform_degrees) % 360
+            for angle in left_angles
+        ]
+        if not matches:
+            mismatch_index = state.rng.randrange(sequence_length)
+            adjustment = state.rng.choice((-45, 45))
+            changed_angle = right_angles[mismatch_index] + adjustment
+            right_angles[mismatch_index] = changed_angle % 360
+        return (
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in left_angles
+            ],
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in right_angles
+            ],
+        )
+
+    @staticmethod
+    def _rotated_arrow_grids(state, transform_degrees, matches):
+        angle_pool = tuple(range(0, 360, 45))
+        left_angles = [
+            state.rng.choice(angle_pool)
+            for _index in range(9)
+        ]
+        right_angles = RunStore._rotate_arrow_grid(
+            left_angles,
+            transform_degrees // 90,
+        )
+        if not matches:
+            mismatch_index = state.rng.randrange(len(right_angles))
+            adjustment = state.rng.choice((-45, 45))
+            changed_angle = right_angles[mismatch_index] + adjustment
+            right_angles[mismatch_index] = changed_angle % 360
+        return (
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in left_angles
+            ],
+            [
+                RunStore._symbol_arrow_token(angle)
+                for angle in right_angles
+            ],
+        )
+
+    @staticmethod
+    def _rotate_arrow_grid(angles, quarter_turns):
+        size = 3
+        rotated = list(angles)
+        for _turn in range(quarter_turns):
+            next_grid = [None] * len(rotated)
+            for row in range(size):
+                for column in range(size):
+                    next_row = column
+                    next_column = size - 1 - row
+                    next_grid[(next_row * size) + next_column] = (
+                        rotated[(row * size) + column] + 90
+                    ) % 360
+            rotated = next_grid
+        return rotated
+
+    @staticmethod
+    def _symbol_arrow_token(rotation):
+        return {
+            'symbol': 'arrow-{:03d}'.format(rotation),
+            'glyph': '↑',
+            'shape': 'arrow',
+            'fill': 'solid',
+            'rotation_deg': rotation,
+            'internal_mark': 'none',
+            'accessible_label': (
+                RunStore._accessible_arrow_label(rotation)
+            ),
+        }
+
+    @staticmethod
     def _public_symbol_token(symbol):
+        if isinstance(symbol, dict):
+            return dict(symbol)
         token = dict(_SYMBOL_TOKENS[symbol])
         token['symbol'] = symbol
         return token
 
     @staticmethod
-    def _symbol_mismatch(state, left_symbol):
-        if state.level == 4:
-            return 'rotation', _SYMBOL_ROTATION_PARTNERS[left_symbol]
-        if state.level == 5:
-            return 'internal_mark', _SYMBOL_MARK_PARTNERS[left_symbol]
-
+    def _symbol_mismatch(state, left_symbol, level=None):
+        level = state.level if level is None else level
         feature_rules = {
             1: ('shape_and_fill', ('shape', 'fill'), ()),
             2: ('shape', ('shape',), ('fill',)),
             3: ('fill', ('fill',), ('shape',)),
         }
         mismatch_kind, different_fields, matching_fields = (
-            feature_rules[state.level]
+            feature_rules[level]
         )
         candidates = [
             symbol
@@ -1928,19 +2259,20 @@ class RunStore:
         return differences_match and similarities_match
 
     @staticmethod
-    def _generate_word_scramble(state):
+    def _generate_word_scramble(state, level=None):
+        level = state.level if level is None else level
         answer = state.rng.choice(
-            _SCRAMBLE_WORDS_BY_LEVEL[state.level],
+            _SCRAMBLE_WORDS_BY_LEVEL[level],
         )
         scrambled = state.rng.choice(
-            _SCRAMBLE_DERANGEMENTS[(state.level, answer)],
+            _SCRAMBLE_DERANGEMENTS[(level, answer)],
         )
         moved_positions, preserved_bigrams = _scramble_metrics(
             answer,
             scrambled,
         )
         hint = None
-        if state.level == 1:
+        if level == 1:
             hint = 'Starts with {}'.format(answer[0].upper())
         prompt = 'Unscramble: {}'.format(scrambled)
         if hint is not None:

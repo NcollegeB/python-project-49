@@ -87,6 +87,50 @@ class FrontendProgressionContractTest(unittest.TestCase):
         )
         self.assertIn('.symbol-sequence', self.stylesheet)
 
+    def test_extended_direction_and_symbol_contract_is_rendered(self):
+        for rotation in range(0, 360, 15):
+            self.assertIn(
+                '.arrow-token[data-rotation="{}"]'.format(rotation),
+                self.stylesheet,
+            )
+            self.assertIn(
+                '.symbol-token[data-rotation="{}"]'.format(rotation),
+                self.stylesheet,
+            )
+        for source in (
+                'game.max_level',
+                'max_level: maxLevel',
+                'round.source_level',
+                'round.data?.instruction',
+                'data.accessible_instruction',
+                "token.dataset.frame = frame;",
+                "token.dataset.marker = marker;",
+                "'arrow-token__marker'",
+                "'symbol-token__glyph'",
+                'data.pattern_columns',
+                'group.dataset.columns',
+        ):
+            self.assertIn(source, self.javascript)
+        symbol_data_block = self.javascript.split(
+            'function symbolVisualData',
+            1,
+        )[1].split(
+            'function symbolAccessibilityLabel',
+            1,
+        )[0]
+        self.assertLess(
+            symbol_data_block.index('data.left_tokens'),
+            symbol_data_block.index('data.left_symbols'),
+        )
+        for source in (
+                '.arrow-token[data-frame="round"]',
+                '.arrow-token[data-frame="square"]',
+                '.arrow-token__marker',
+                '.symbol-token__glyph',
+                '.symbol-sequence[data-columns="3"]',
+        ):
+            self.assertIn(source, self.stylesheet)
+
     def test_memory_preview_waits_for_paint_and_resumes_remaining_time(self):
         for source in (
                 'state.preview.totalMs',
@@ -144,9 +188,15 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 "addEventListener('close', () => {",
                 'arrow.accessible_label',
                 'data.accessible_sequence',
-                'Find the odd arrow. Row by row:',
+                'data.accessible_instruction',
+                'round.prompt',
+                'Row by row:',
         ):
             self.assertIn(source, self.javascript)
+        self.assertNotIn(
+            'Find the odd arrow. Row by row:',
+            self.javascript,
+        )
         self.assertNotIn(
             'Angles in degrees, row by row:',
             self.javascript,

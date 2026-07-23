@@ -23,6 +23,7 @@ from brain_games.persistence import RUN_STATE_VERSION
 from brain_games.persistence import scores_table
 from brain_games.persistence import serialize_run_state
 from brain_games.web_engine import RunStore
+from brain_games.web_engine import SCORE_GAME_PREFIX
 from brain_games.web_engine import StaleRoundError
 from brain_games.web_engine import UnknownRunError
 
@@ -275,7 +276,10 @@ class DatabasePersistenceTest(unittest.TestCase):
         raw = self.leaderboard.top(player='current')
         public = self.first.leaders(player='current')
 
-        self.assertEqual('r2:prime', raw[0]['game'])
+        self.assertEqual(
+            '{}prime'.format(SCORE_GAME_PREFIX),
+            raw[0]['game'],
+        )
         self.assertEqual('prime', public[0]['game'])
 
     def test_missing_run_is_consistent_across_instances(self):
@@ -339,6 +343,33 @@ class RunSnapshotTest(unittest.TestCase):
                 malformed[field] = invalid
                 with self.assertRaises(ValueError):
                     deserialize_run_state(malformed, random.Random(9))
+
+    def test_snapshot_accepts_level_eight_only_for_eligible_games(self):
+        store = RunStore(random_factory=lambda: random.Random(8))
+
+        for slug in ('direction-focus', 'symbol-match', 'culmination'):
+            with self.subTest(game=slug):
+                run = store.create(slug, 'Ada')
+                state = store._runs[run['run_id']]
+                state.level = 8
+                snapshot = serialize_run_state(state)
+
+                restored = deserialize_run_state(
+                    snapshot,
+                    random.Random(9),
+                )
+
+                self.assertEqual(8, restored.level)
+
+        run = store.create('even', 'Ada')
+        state = store._runs[run['run_id']]
+        state.level = 6
+
+        with self.assertRaises(ValueError):
+            deserialize_run_state(
+                serialize_run_state(state),
+                random.Random(9),
+            )
 
     def test_postgres_query_locks_the_run_row(self):
         statement = PostgresRunStore.locked_state_statement(

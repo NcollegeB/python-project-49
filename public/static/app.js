@@ -8,10 +8,10 @@ const STILL_CHECKING_DELAY = 1000;
 const TIMEOUT_ANSWER = '__brainhacker_timeout__';
 const TIMEOUT_RETRY_DELAYS = [500, 1000, 2000, 4000, 5000];
 const SUPPORTED_ARROW_ROTATIONS = new Set([
-    0, 20, 30, 40, 45, 50, 60, 70,
-    90, 110, 120, 130, 135, 140, 150, 160,
-    180, 200, 210, 220, 225, 230, 240, 250,
-    270, 290, 300, 310, 315, 320, 330, 340,
+    0, 15, 20, 30, 40, 45, 50, 60, 70, 75,
+    90, 105, 110, 120, 130, 135, 140, 150, 160, 165,
+    180, 195, 200, 210, 220, 225, 230, 240, 250, 255,
+    270, 285, 290, 300, 310, 315, 320, 330, 340, 345,
 ]);
 
 const iconBySlug = {
@@ -339,6 +339,10 @@ function openBriefing(slug, options = {}) {
     if (!game) {
         return;
     }
+    const configuredMaxLevel = Number(game.max_level || 5);
+    const maxLevel = Number.isFinite(configuredMaxLevel)
+        ? Math.max(1, Math.round(configuredMaxLevel))
+        : 5;
     clearPreviewTimer();
     clearTransitionTimer();
     clearPendingFeedback();
@@ -370,7 +374,7 @@ function openBriefing(slug, options = {}) {
         level: 1,
         level_progress: 0,
         level_goal: 3,
-        max_level: 5,
+        max_level: maxLevel,
     });
     dom.roundValue.textContent = 'Ready';
     dom.cycleTrack.replaceChildren();
@@ -930,6 +934,15 @@ function arrowTokenData(token) {
 
 
 function symbolVisualData(data) {
+    if (
+        Array.isArray(data.left_tokens)
+        || Array.isArray(data.right_tokens)
+    ) {
+        return [data.left_tokens, data.right_tokens].map((sequence) => (
+            Array.isArray(sequence) ? sequence : []
+        ));
+    }
+
     if (Array.isArray(data.sequences) && data.sequences.length >= 2) {
         return [data.sequences[0], data.sequences[1]].map((sequence) => (
             Array.isArray(sequence) ? sequence : [sequence]
@@ -939,21 +952,11 @@ function symbolVisualData(data) {
     const left = (
         data.left_sequence
         ?? data.left_symbols
-        ?? (
-            Array.isArray(data.left_tokens)
-                ? data.left_tokens.map((token) => token.symbol)
-                : undefined
-        )
         ?? data.left
     );
     const right = (
         data.right_sequence
         ?? data.right_symbols
-        ?? (
-            Array.isArray(data.right_tokens)
-                ? data.right_tokens.map((token) => token.symbol)
-                : undefined
-        )
         ?? data.right
     );
     if (left !== undefined || right !== undefined) {
@@ -1038,9 +1041,20 @@ function renderGenericVisual(round) {
                 : sequenceLabels
         );
         if (accessibleDirections.length === directionData.arrows.length) {
+            const accessibleInstruction = String(
+                data.accessible_instruction
+                || round.prompt
+                || 'Review the arrows.',
+            ).trim();
+            const instructionSeparator = /[.!?]$/.test(
+                accessibleInstruction,
+            ) ? '' : '.';
             visual.setAttribute(
                 'aria-label',
-                `Find the odd arrow. Row by row: ${accessibleDirections.join('; ')}.`,
+                (
+                    `${accessibleInstruction}${instructionSeparator} `
+                    + `Row by row: ${accessibleDirections.join('; ')}.`
+                ),
             );
         }
         const row = document.createElement('div');
@@ -1053,6 +1067,23 @@ function renderGenericVisual(round) {
             const tokenData = arrowTokenData(arrow);
             const token = document.createElement('span');
             token.className = 'arrow-token';
+            if (typeof arrow === 'object' && arrow !== null) {
+                const frame = String(arrow.frame || '').toLowerCase();
+                const marker = String(arrow.marker || '').toLowerCase();
+                if (frame === 'round' || frame === 'square') {
+                    token.dataset.frame = frame;
+                }
+                if (marker === 'dot' || marker === 'none') {
+                    token.dataset.marker = marker;
+                }
+                if (marker === 'dot') {
+                    token.append(createTextElement(
+                        'span',
+                        'arrow-token__marker',
+                        '',
+                    ));
+                }
+            }
             if (tokenData.rotation !== null) {
                 token.dataset.rotation = String(tokenData.rotation);
             }
@@ -1085,15 +1116,29 @@ function renderGenericVisual(round) {
         const comparison = document.createElement('div');
         comparison.className = 'symbol-comparison';
         comparison.setAttribute('aria-hidden', 'true');
+        const rawPatternColumns = Number(data.pattern_columns);
+        const patternColumns = Number.isFinite(rawPatternColumns)
+            ? Math.max(0, Math.min(6, Math.round(rawPatternColumns)))
+            : 0;
         sequences.forEach((sequence, index) => {
             const group = document.createElement('div');
             group.className = 'symbol-sequence';
+            if (patternColumns >= 2) {
+                group.dataset.columns = String(patternColumns);
+            }
             sequence.filter((symbol) => symbol !== null).forEach((symbol) => {
-                group.append(createTextElement(
+                const tokenData = arrowTokenData(symbol);
+                const token = document.createElement('span');
+                token.className = 'symbol-token';
+                if (tokenData.rotation !== null) {
+                    token.dataset.rotation = String(tokenData.rotation);
+                }
+                token.append(createTextElement(
                     'span',
-                    'symbol-token',
-                    visualTokenText(symbol),
+                    'symbol-token__glyph',
+                    tokenData.glyph,
                 ));
+                group.append(token);
             });
             comparison.append(group);
             if (index === 0) {
@@ -1331,7 +1376,8 @@ function startMemoryPreview(round) {
     state.preview.totalMs = delay;
     state.preview.remainingMs = delay;
     state.preview.paused = document.visibilityState === 'hidden';
-    dom.roundPrompt.textContent = instructionBySlug[round.source_slug]
+    dom.roundPrompt.textContent = round.data?.instruction
+        || instructionBySlug[round.source_slug]
         || 'Memorize this.';
     dom.memoryCurtain.hidden = true;
     dom.answerForm.hidden = true;
@@ -1358,10 +1404,16 @@ function renderRound(round) {
     dom.roundSource.dataset.category = categoryClass(
         round.source_category || state.selected.category,
     );
-    const roundLevel = Number(round.level ?? state.run?.level ?? 1);
+    const roundLevel = Number(
+        round.source_level
+        ?? round.level
+        ?? state.run?.level
+        ?? 1,
+    );
     const difficulty = round.difficulty_label || 'Foundation';
     dom.difficultyLabel.textContent = `Level ${roundLevel} · ${difficulty}`;
-    dom.roundPrompt.textContent = instructionBySlug[round.source_slug]
+    dom.roundPrompt.textContent = round.data?.instruction
+        || instructionBySlug[round.source_slug]
         || round.prompt
         || round.rules;
     dom.stageRules.textContent = round.rules || state.selected.rules;

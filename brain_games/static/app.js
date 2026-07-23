@@ -1,8 +1,7 @@
 import {ArcadeAudio} from './audio.js';
-import {ArcadeEffects} from './effects.js';
 
 
-const PLAYER_STORAGE_KEY = 'brain-games-player-name';
+const PLAYER_STORAGE_KEY = 'brainhacker-player-name';
 const DEFAULT_PLAYER = 'Player';
 const FEEDBACK_DELAY = 620;
 
@@ -40,7 +39,6 @@ const state = {
     run: null,
     round: null,
     roundNumber: 0,
-    activeFilter: 'All',
     busy: false,
     previewTimer: null,
     previewRoundId: null,
@@ -48,10 +46,10 @@ const state = {
     startSequence: 0,
     navigating: false,
     personalBests: new Map(),
+    benchmarks: new Map(),
 };
 
 let audio;
-let effects;
 
 
 function scrollBehavior() {
@@ -68,7 +66,7 @@ function getElement(id) {
 
 function cacheDom() {
     [
-        'effectsCanvas', 'homeView', 'gameView', 'gameGrid', 'filterBar',
+        'homeView', 'gameView', 'gameGrid',
         'startCulmination', 'browseGames', 'leaderboardButton',
         'soundToggle', 'backButton', 'stageCategory', 'stageTitle',
         'stageRules', 'scoreValue', 'livesValue', 'roundValue',
@@ -77,6 +75,7 @@ function cacheDom() {
         'startRunButton', 'roundSource', 'roundPrompt', 'roundVisual',
         'memoryCurtain', 'answerForm', 'answerInput', 'submitAnswer',
         'choiceControls', 'answerRow', 'feedbackRegion', 'resultScore', 'resultBest',
+        'resultAverage', 'resultPercentile', 'resultRank',
         'resultMessage', 'retryButton', 'resultMenuButton',
         'leaderboardDialog', 'leaderboardRows', 'leaderboardFilter',
         'closeLeaderboard', 'playerName',
@@ -123,12 +122,19 @@ function readPlayerName() {
 
 
 function currentPlayerName() {
+    const accountName = document.body.dataset.currentUser;
+    if (accountName) {
+        return accountName;
+    }
     const value = (dom.playerName?.value || '').trim();
     return value.slice(0, 24) || DEFAULT_PLAYER;
 }
 
 
 function savePlayerName() {
+    if (document.body.dataset.currentUser) {
+        return;
+    }
     const name = currentPlayerName();
     if (dom.playerName) {
         dom.playerName.value = name;
@@ -183,49 +189,13 @@ function findGame(slug) {
 }
 
 
-function renderFilters() {
-    if (!dom.filterBar) {
-        return;
-    }
-    const categories = ['All', ...new Set(
-        state.catalog
-            .filter((game) => game.slug !== 'culmination')
-            .map((game) => game.category),
-    )];
-    dom.filterBar.replaceChildren();
-    categories.forEach((category) => {
-        const button = createTextElement(
-            'button',
-            'filter-chip',
-            category,
-        );
-        button.type = 'button';
-        button.dataset.filter = category;
-        button.setAttribute(
-            'aria-pressed',
-            String(category === state.activeFilter),
-        );
-        button.addEventListener('click', () => {
-            state.activeFilter = category;
-            renderFilters();
-            renderCards();
-        });
-        dom.filterBar.append(button);
-    });
-}
-
-
 function renderCards() {
     if (!dom.gameGrid) {
         return;
     }
-    const visibleGames = state.catalog.filter((game) => {
-        if (game.slug === 'culmination') {
-            return false;
-        }
-        return state.activeFilter === 'All'
-            || game.category === state.activeFilter;
-    });
+    const visibleGames = state.catalog.filter(
+        (game) => game.slug !== 'culmination',
+    );
     dom.gameGrid.replaceChildren();
 
     visibleGames.forEach((game) => {
@@ -235,11 +205,6 @@ function renderCards() {
         const top = document.createElement('div');
         top.className = 'game-card__top';
         top.append(
-            createTextElement(
-                'span',
-                'game-card__icon',
-                iconBySlug[game.slug] || game.icon || '•',
-            ),
             createTextElement('span', 'game-card__category', game.category),
         );
         card.append(
@@ -255,11 +220,19 @@ function renderCards() {
         const footer = document.createElement('div');
         footer.className = 'game-card__footer';
         const best = state.personalBests.get(game.slug);
+        const benchmark = state.benchmarks.get(game.slug);
         footer.append(
             createTextElement(
                 'span',
                 'game-card__best',
                 best === undefined ? 'No score yet' : `Best ${best}`,
+            ),
+            createTextElement(
+                'span',
+                'game-card__average',
+                benchmark
+                    ? `Average ${benchmark.average_score}`
+                    : 'Fixed benchmark',
             ),
         );
         const play = createTextElement('button', 'game-card__cta', 'Play →');
@@ -731,7 +704,6 @@ async function submitAnswer(answer) {
             dom.activeState.dataset.feedback = 'correct';
             setFeedback(`${sourceName}: correct — one point added.`, 'correct');
             audio.cue('correct');
-            effects.burst('#63E6BE', 20);
         } else {
             dom.activeState.dataset.feedback = 'wrong';
             const expected = grading.expected_answer;
@@ -740,7 +712,6 @@ async function submitAnswer(answer) {
                 'wrong',
             );
             audio.cue('wrong');
-            effects.mistake();
         }
 
         if (runResult.game_over || runResult.ended || !runResult.round) {
@@ -794,20 +765,66 @@ async function finishRun(result) {
     state.run.ended = true;
     showState('result');
     dom.resultScore.textContent = String(score);
-    dom.resultBest.textContent = isBest ? `${score} · NEW` : String(previousBest);
+    dom.resultBest.textContent = isBest ? `${score} NEW` : String(previousBest);
     dom.resultBest.dataset.best = String(isBest);
     dom.resultMessage.textContent = score === 0
         ? 'Every baseline starts somewhere. Take another run.'
         : `You cleared ${score} ${score === 1 ? 'round' : 'rounds'} before losing three lives.`;
+    if (dom.resultAverage) {
+        dom.resultAverage.textContent = '…';
+    }
+    if (dom.resultPercentile) {
+        dom.resultPercentile.textContent = '…';
+    }
+    if (dom.resultRank) {
+        dom.resultRank.textContent = '…';
+    }
     if (isBest) {
         audio.cue('best');
-        effects.celebrate(true);
     } else {
         audio.cue('gameover');
-        effects.celebrate(false);
     }
-    await refreshPersonalBests();
+    await Promise.all([
+        refreshPersonalBests(),
+        refreshResultBenchmark(state.selected.slug, score),
+    ]);
     window.setTimeout(() => dom.retryButton?.focus(), 0);
+}
+
+
+function ordinal(number) {
+    const value = Number(number);
+    const mod100 = value % 100;
+    if (mod100 >= 11 && mod100 <= 13) {
+        return `${value}th`;
+    }
+    const suffix = {1: 'st', 2: 'nd', 3: 'rd'}[value % 10] || 'th';
+    return `${value}${suffix}`;
+}
+
+
+async function refreshResultBenchmark(game, score) {
+    try {
+        const benchmark = await api(
+            `/api/benchmarks/${encodeURIComponent(game)}?score=${score}`,
+        );
+        state.benchmarks.set(game, benchmark);
+        if (dom.resultAverage) {
+            dom.resultAverage.textContent = String(benchmark.average_score);
+        }
+        if (dom.resultPercentile) {
+            dom.resultPercentile.textContent = ordinal(benchmark.percentile);
+        }
+        if (dom.resultRank) {
+            dom.resultRank.textContent = `${benchmark.rank_out_of_100}/100`;
+        }
+    } catch (_error) {
+        [dom.resultAverage, dom.resultPercentile, dom.resultRank]
+            .filter(Boolean)
+            .forEach((element) => {
+                element.textContent = '—';
+            });
+    }
 }
 
 
@@ -1067,13 +1084,22 @@ function bindEvents() {
 async function initialise() {
     cacheDom();
     audio = new ArcadeAudio(dom.soundToggle);
-    effects = new ArcadeEffects(dom.effectsCanvas);
-    dom.playerName.value = readPlayerName();
+    if (dom.playerName) {
+        const accountName = document.body.dataset.currentUser;
+        dom.playerName.value = accountName || readPlayerName();
+        dom.playerName.readOnly = Boolean(accountName);
+    }
     bindEvents();
 
     try {
-        state.catalog = unwrapGames(await api('/api/games'));
-        renderFilters();
+        const [catalogPayload, benchmarkPayload] = await Promise.all([
+            api('/api/games'),
+            api('/api/benchmarks'),
+        ]);
+        state.catalog = unwrapGames(catalogPayload);
+        (benchmarkPayload.benchmarks || []).forEach((benchmark) => {
+            state.benchmarks.set(benchmark.slug, benchmark);
+        });
         await refreshPersonalBests();
         renderCards();
         const initialSlug = document.body.dataset.initialGame;
@@ -1090,7 +1116,7 @@ async function initialise() {
             createTextElement(
                 'p',
                 'page-error',
-                `The arcade could not load: ${error.message}`,
+                `BrainHacker could not load: ${error.message}`,
             ),
         );
     }

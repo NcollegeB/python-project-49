@@ -3,86 +3,55 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#070B14">
-    <meta name="color-scheme" content="dark">
-    <meta name="description" content="A collection of focused, fast-paced brain games for the browser.">
-    <title>{% block title %}Brain Games · Night Arcade Lab{% endblock %}</title>
+    <meta name="theme-color" content="#F6F2E8">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="BrainHacker is a collection of short, focused brain games with clear scores and fixed benchmarks.">
+    <title>{% block title %}BrainHacker{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
-<body data-initial-game="{{ initial_game|default('', true)|e }}">
-    <a class="skip-link" href="#mainContent">Skip to the games</a>
-    <canvas id="effectsCanvas" class="effects-canvas" aria-hidden="true"></canvas>
+<body
+    data-initial-game="{{ initial_game|default('', true)|e }}"
+    data-current-user="{% if current_user %}{{ current_user.username|default(current_user, true)|e }}{% endif %}"
+>
+    <a class="skip-link" href="#mainContent">Skip to content</a>
 
     <div class="app-shell">
-        <header class="site-header" aria-label="Primary navigation">
-            <a class="brand" href="/" aria-label="Brain Games home">
-                <span class="brand-mark" aria-hidden="true">
-                    <span></span><span></span><span></span><span></span>
-                </span>
-                <span class="brand-copy">
-                    <span class="brand-kicker">Night Arcade Lab</span>
-                    <span class="brand-name">Brain Games</span>
-                </span>
+        <header class="site-header">
+            <a class="brand" href="/" aria-label="BrainHacker home">
+                <span class="brand-monogram" aria-hidden="true">BH</span>
+                <span class="brand-name">BrainHacker</span>
             </a>
 
-            <div class="header-actions">
-                <button class="utility-button" id="leaderboardButton" type="button">
-                    <span class="utility-icon" aria-hidden="true">◆</span>
-                    <span>Leaders</span>
-                </button>
-                <button class="utility-button sound-toggle" id="soundToggle" type="button"
-                        aria-pressed="true" aria-label="Sound on" title="Sound on">
-                    <span class="sound-glyph" aria-hidden="true">◖</span>
-                    <span data-sound-label>Sound on</span>
-                </button>
-            </div>
+            <nav class="site-navigation" aria-label="Primary navigation">
+                <a href="/#gameLibrary">Games</a>
+                <a href="/stats">Statistics</a>
+                {% block game_navigation %}{% endblock %}
+
+                {% if current_user %}
+                    <span class="account-name" title="Signed in">
+                        {{ current_user.username|default(current_user, true)|e }}
+                    </span>
+                    <form class="logout-form" method="post" action="/logout">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true)|e }}">
+                        <button class="nav-button" type="submit">Log out</button>
+                    </form>
+                {% else %}
+                    <a class="nav-login" href="/login">Log in</a>
+                {% endif %}
+            </nav>
         </header>
 
-        <main id="mainContent">
+        <main id="mainContent" tabindex="-1">
             {% block content %}{% endblock %}
         </main>
 
         <footer class="site-footer">
-            <p><span class="status-dot" aria-hidden="true"></span> Scores stay in your local arcade.</p>
-            <p class="keyboard-note"><kbd>Enter</kbd> submit <span aria-hidden="true">·</span> <kbd>Esc</kbd> menu</p>
+            <p><strong>BrainHacker</strong> — short games, clear scores.</p>
+            <p>Benchmarks are fixed and model-based, never calculated from live players.</p>
         </footer>
     </div>
 
-    <dialog class="leaderboard-dialog" id="leaderboardDialog" aria-labelledby="leaderboardTitle">
-        <div class="dialog-header">
-            <div>
-                <p class="eyebrow">Local records</p>
-                <h2 id="leaderboardTitle">Leaderboard</h2>
-            </div>
-            <button class="icon-button" id="closeLeaderboard" type="button" aria-label="Close leaderboard">×</button>
-        </div>
-
-        <div class="leaderboard-toolbar">
-            <label for="leaderboardFilter">Show scores for</label>
-            <select id="leaderboardFilter" name="leaderboard-filter">
-                <option value="all">All games</option>
-            </select>
-        </div>
-
-        <div class="table-scroll" tabindex="0" aria-label="Leaderboard scores">
-            <table class="leaderboard-table">
-                <thead>
-                    <tr>
-                        <th scope="col">Rank</th>
-                        <th scope="col">Player</th>
-                        <th scope="col">Game</th>
-                        <th scope="col">Score</th>
-                    </tr>
-                </thead>
-                <tbody id="leaderboardRows">
-                    <tr class="empty-row">
-                        <td colspan="4">Complete a run to set the first score.</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </dialog>
-
-    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+    {% block dialogs %}{% endblock %}
+    {% block scripts %}{% endblock %}
 </body>
 </html>

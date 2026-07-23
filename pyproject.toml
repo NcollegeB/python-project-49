@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "hexlet-code"
-version = "0.5.0"
-description = "A terminal and browser arcade with ten games and a mixed test"
+version = "0.6.0"
+description = "BrainHacker browser tests and terminal games with fixed score benchmarks"
 authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
 packages = [
   { include = "brain_games" },
@@ -14,7 +14,7 @@ classifiers = [
 
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = ">=3.9,<4.0"
 prompt = "^0.4.1"
 flask = "^2.3.2"
 flask-wtf = "^1.1.1"
@@ -24,12 +24,11 @@ gunicorn = "^21.2.0"
 flask-sqlalchemy = "^3.1.1"
 python-dotenv = "^1.0.0"
 flask-admin = "^1.6.1"
-psycopg2 = "^2.9.7"
-psycopg2-binary = "^2.9.7"
-sqlalchemy = "^2.0.21"
+psycopg2-binary = "^2.9.12"
+sqlalchemy = "^2.0.51"
 
-[tool.poetry.dev-dependencies]
-flake8 = "^5.0.4"
+[tool.poetry.group.dev.dependencies]
+flake8 = "7.1.2"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

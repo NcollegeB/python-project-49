@@ -1,87 +1,87 @@
 {% extends "layout.html" %}
 
+{% block title %}BrainHacker — Short games. Clear scores.{% endblock %}
+
+{% block game_navigation %}
+<button class="nav-button" id="leaderboardButton" type="button">Leaderboard</button>
+<button class="nav-button sound-toggle" id="soundToggle" type="button"
+        aria-pressed="true" aria-label="Sound on" title="Sound on">
+    <span class="sound-glyph" aria-hidden="true">♪</span>
+    <span data-sound-label>Sound on</span>
+</button>
+{% endblock %}
+
 {% block content %}
 <section class="home-view" id="homeView" aria-labelledby="heroTitle">
     <div class="hero">
         <div class="hero-copy">
-            <p class="eyebrow"><span aria-hidden="true">●</span> Daily focus protocol</p>
-            <h1 id="heroTitle">Turn focus into <span>momentum.</span></h1>
+            <p class="eyebrow">Cognitive practice, without the clutter</p>
+            <h1 id="heroTitle">Short games.<br>Clear scores.</h1>
             <p class="hero-summary">
-                Ten quick challenges for memory, attention, language, and logic—plus one
-                all-in culmination run. Three lives. Endless rounds. Your best score to beat.
+                Practice memory, attention, language, and logic in quick tests.
+                Every run gives you three lives and continues until they are gone.
             </p>
 
             <div class="player-field">
-                <label for="playerName">Player name</label>
-                <div class="player-input-wrap">
-                    <span aria-hidden="true">@</span>
-                    <input id="playerName" name="player-name" type="text" maxlength="24"
-                           autocomplete="nickname" spellcheck="false" placeholder="night-owl">
-                </div>
+                {% if current_user %}
+                    <label for="playerName">Scores save to</label>
+                    <div class="player-input-wrap is-account">
+                        <input id="playerName" name="player-name" type="text" maxlength="24"
+                               value="{{ current_user.username|default(current_user, true)|e }}"
+                               readonly aria-readonly="true">
+                        <span class="saved-label">Signed in</span>
+                    </div>
+                {% else %}
+                    <label for="playerName">Player name</label>
+                    <div class="player-input-wrap">
+                        <input id="playerName" name="player-name" type="text" maxlength="24"
+                               autocomplete="nickname" spellcheck="false" placeholder="Player">
+                    </div>
+                    <p class="field-note"><a href="/login">Log in</a> to keep your scores tied to your account.</p>
+                {% endif %}
             </div>
 
             <div class="hero-actions">
                 <button class="primary-button" id="startCulmination" type="button">
-                    <span>Start Culmination</span>
-                    <span class="button-arrow" aria-hidden="true">→</span>
+                    Start the full test <span class="button-arrow" aria-hidden="true">→</span>
                 </button>
-                <a class="secondary-button" id="browseGames" href="#gameLibrary">Browse all games</a>
-            </div>
-
-            <div class="hero-proof" aria-label="How a run works">
-                <div>
-                    <strong>3</strong>
-                    <span>lives per run</span>
-                </div>
-                <div>
-                    <strong>∞</strong>
-                    <span>random rounds</span>
-                </div>
-                <div>
-                    <strong>11</strong>
-                    <span>ways to play</span>
-                </div>
+                <a class="secondary-button" id="browseGames" href="#gameLibrary">Choose a single game</a>
             </div>
         </div>
 
-        <div class="hero-console" aria-hidden="true">
-            <div class="console-topline">
-                <span>Live challenge feed</span>
-                <span class="live-indicator"><i></i> Ready</span>
+        <dl class="test-notes" aria-label="How BrainHacker works">
+            <div>
+                <dt>Lives</dt>
+                <dd>3 per run</dd>
             </div>
-            <div class="console-orbit">
-                <div class="orbit orbit-one"></div>
-                <div class="orbit orbit-two"></div>
-                <div class="core-mark">
-                    <span>BG</span>
-                    <small>Focus engine</small>
-                </div>
-                <span class="orbit-node node-one">Memory</span>
-                <span class="orbit-node node-two">Logic</span>
-                <span class="orbit-node node-three">Speed</span>
+            <div>
+                <dt>Length</dt>
+                <dd>Until you miss three</dd>
             </div>
-            <div class="console-readout">
-                <span><i></i> Rounds randomized</span>
-                <span><i></i> Scores saved locally</span>
+            <div>
+                <dt>Benchmark</dt>
+                <dd>Fixed, not crowd-sourced</dd>
             </div>
-        </div>
+            <div>
+                <dt>Tests</dt>
+                <dd>10 + culmination</dd>
+            </div>
+        </dl>
     </div>
 
     <section class="game-library" id="gameLibrary" aria-labelledby="libraryTitle">
         <div class="section-heading">
             <div>
-                <p class="eyebrow">Pick a circuit</p>
-                <h2 id="libraryTitle">Choose your challenge</h2>
+                <p class="eyebrow">Test directory</p>
+                <h2 id="libraryTitle">Choose a test</h2>
             </div>
-            <p>Short sessions, instant feedback, and no fixed finish line.</p>
+            <p>Each test is endless. One correct answer earns one point; three misses end the run.</p>
         </div>
 
-        <div class="filter-bar" id="filterBar" role="toolbar" aria-label="Filter games by category">
-            <!-- Filter chips are rendered by app.js. -->
-        </div>
+        <div class="filter-bar" id="filterBar" aria-hidden="true" hidden></div>
 
         <div class="game-grid" id="gameGrid" aria-live="polite">
-            <!-- Game cards are rendered by app.js. -->
+            <p class="loading-note">Loading the test directory…</p>
         </div>
     </section>
 </section>
@@ -90,12 +90,12 @@
     <div class="game-nav">
         <button class="back-button" id="backButton" type="button">
             <span aria-hidden="true">←</span>
-            <span>All games</span>
+            <span>Test directory</span>
         </button>
-        <p class="run-status"><span aria-hidden="true"></span> Run in progress</p>
+        <p class="run-status">Test in progress</p>
     </div>
 
-    <div class="stage-shell">
+    <article class="stage-shell">
         <header class="stage-header">
             <div class="stage-identity">
                 <p class="stage-category" id="stageCategory">Challenge</p>
@@ -123,12 +123,12 @@
 
         <div class="stage-card">
             <section class="briefing-state" id="briefingState" aria-labelledby="briefingTitle">
-                <div class="briefing-icon" id="briefingIcon" aria-hidden="true">◇</div>
-                <p class="eyebrow">Next protocol</p>
+                <div class="briefing-icon" id="briefingIcon" aria-hidden="true">01</div>
+                <p class="eyebrow">Instructions</p>
                 <h2 id="briefingTitle">Prepare to focus</h2>
                 <p id="briefingDescription">Your first round begins when you are ready.</p>
                 <button class="primary-button start-run-button" id="startRunButton" type="button">
-                    Start run <span class="button-arrow" aria-hidden="true">→</span>
+                    Begin test <span class="button-arrow" aria-hidden="true">→</span>
                 </button>
                 <p class="key-hint"><kbd>Enter</kbd> to begin</p>
             </section>
@@ -141,7 +141,7 @@
                     <div class="round-visual" id="roundVisual" aria-live="polite"></div>
                     <div class="memory-curtain" id="memoryCurtain" role="status"
                          aria-live="polite" hidden>
-                        <span aria-hidden="true">● ● ●</span>
+                        <span aria-hidden="true">• • •</span>
                         <strong>Now answer from memory</strong>
                     </div>
                 </div>
@@ -151,7 +151,7 @@
                     <div class="answer-row" id="answerRow">
                         <label class="visually-hidden" for="answerInput">Your answer</label>
                         <input id="answerInput" name="answer" type="text" inputmode="text"
-                               autocapitalize="none" spellcheck="false" placeholder="Type your answer…">
+                               autocapitalize="none" spellcheck="false" placeholder="Type your answer">
                         <button class="primary-button submit-answer" id="submitAnswer" type="submit">
                             Submit <span class="button-arrow" aria-hidden="true">→</span>
                         </button>
@@ -162,28 +162,86 @@
             </section>
 
             <section class="result-state" id="resultState" aria-labelledby="resultHeading" hidden>
-                <div class="result-emblem" aria-hidden="true"><span>★</span></div>
-                <p class="eyebrow">Run complete</p>
-                <h2 id="resultHeading">Good circuit.</h2>
-                <p class="result-message" id="resultMessage">Your score is saved. Ready to go again?</p>
-                <div class="result-scores">
-                    <div>
-                        <span>Final score</span>
-                        <strong id="resultScore">0</strong>
+                <p class="eyebrow">Score report</p>
+                <h2 id="resultHeading">Test complete</h2>
+                <p class="result-message" id="resultMessage">Your score is ready.</p>
+
+                <dl class="result-scores">
+                    <div class="result-primary">
+                        <dt>Final score</dt>
+                        <dd id="resultScore">0</dd>
                     </div>
                     <div>
-                        <span>Personal best</span>
-                        <strong id="resultBest">0</strong>
+                        <dt>Personal best</dt>
+                        <dd id="resultBest">0</dd>
                     </div>
-                </div>
+                    <div>
+                        <dt>BrainHacker average</dt>
+                        <dd id="resultAverage">—</dd>
+                    </div>
+                    <div>
+                        <dt>Percentile</dt>
+                        <dd id="resultPercentile">—</dd>
+                    </div>
+                    <div>
+                        <dt>Rank out of 100</dt>
+                        <dd id="resultRank">—</dd>
+                    </div>
+                </dl>
+
+                <p class="benchmark-note">
+                    Percentiles use a fixed, model-based BrainHacker benchmark—not live player data
+                    or a scientific population study. <a href="/stats">See the statistics</a>.
+                </p>
                 <div class="result-actions">
-                    <button class="primary-button" id="retryButton" type="button">Run it again</button>
-                    <button class="secondary-button" id="resultMenuButton" type="button">Choose another game</button>
+                    <button class="primary-button" id="retryButton" type="button">Try again</button>
+                    <button class="secondary-button" id="resultMenuButton" type="button">Choose another test</button>
                 </div>
             </section>
         </div>
 
-        <p class="stage-footnote">Stay accurate—three misses end the run.</p>
-    </div>
+        <p class="stage-footnote">Three misses end the run. Accuracy matters more than speed.</p>
+    </article>
 </section>
+{% endblock %}
+
+{% block dialogs %}
+<dialog class="leaderboard-dialog" id="leaderboardDialog" aria-labelledby="leaderboardTitle">
+    <div class="dialog-header">
+        <div>
+            <p class="eyebrow">Saved records</p>
+            <h2 id="leaderboardTitle">Leaderboard</h2>
+        </div>
+        <button class="icon-button" id="closeLeaderboard" type="button" aria-label="Close leaderboard">×</button>
+    </div>
+
+    <div class="leaderboard-toolbar">
+        <label for="leaderboardFilter">Show scores for</label>
+        <select id="leaderboardFilter" name="leaderboard-filter">
+            <option value="all">All tests</option>
+        </select>
+    </div>
+
+    <div class="table-scroll" tabindex="0" aria-label="Leaderboard scores">
+        <table class="leaderboard-table">
+            <thead>
+                <tr>
+                    <th scope="col">Rank</th>
+                    <th scope="col">Player</th>
+                    <th scope="col">Test</th>
+                    <th scope="col">Score</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboardRows">
+                <tr class="empty-row">
+                    <td colspan="4">Complete a run to set the first score.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

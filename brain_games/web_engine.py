@@ -27,6 +27,7 @@ from brain_games.leaderboard import Leaderboard
 MAX_LIVES = 3
 CULMINATION_SLUG = 'culmination'
 DEFAULT_MAX_RUNS = 512
+MAX_PLAYER_LENGTH = 64
 
 
 class UnknownGameError(LookupError):
@@ -145,7 +146,7 @@ GAME_CATALOG = (
         'name': 'Culmination Test',
         'category': 'Mixed',
         'rules': (
-            'Every round comes from a different Brain Games challenge.'
+            'Every round comes from a different BrainHacker test.'
         ),
         'description': 'Take on all ten challenges in shuffled cycles.',
         'icon': '★',
@@ -225,7 +226,7 @@ class RunStore:
         if not isinstance(player, str) or not player.strip():
             raise ValueError('player must be a non-empty string')
 
-        clean_player = player.strip()[:24]
+        clean_player = player.strip()[:MAX_PLAYER_LENGTH]
         with self._lock:
             rng = self._random_factory()
             self._validate_rng(rng)
@@ -310,7 +311,7 @@ class RunStore:
         if player is not None:
             if not isinstance(player, str) or not player.strip():
                 raise ValueError('player must be a non-empty string')
-            player = player.strip()[:24]
+            player = player.strip()[:MAX_PLAYER_LENGTH]
         with self._lock:
             return self._leaderboard.top(
                 limit=limit,

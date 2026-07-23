@@ -1,25 +1,26 @@
-# Brain Games Arcade
+# BrainHacker
 
-Brain Games Arcade contains ten standalone endless terminal challenges plus a
-mixed Culmination Test. Every correct answer adds one point, every mistake
-costs one of your three lives, and the run ends when no lives remain. Scores
-are saved to a persistent leaderboard, so each game can be replayed to improve
-your personal best.
+BrainHacker is a deliberately simple, paper-inspired browser home for ten
+endless brain games plus a mixed Culmination Test. Every correct answer adds
+one point, every mistake costs one of three lives, and the run ends when no
+lives remain. Create an account to keep a personal best for every test, or
+play without an account under a temporary display name.
 
-The `brain-games` command opens a terminal hub where you can launch any game
-and view the leaderboard without leaving the arcade.
+The original `brain-games` terminal hub remains available with the same games,
+three-life rules, and persistent leaderboard.
 
-## Browser arcade (GUI experiment)
+## Browser app
 
-This branch adds **Night Arcade Lab**, a responsive browser interface for all
-ten games and the separate Culmination Test. Each game has a focused visual
-stage, keyboard and touch controls, immediate right/wrong feedback, a live
-score and three-life display, and the same persistent local leaderboard as the
-terminal arcade.
+The Paper Test interface keeps the gameplay ahead of decoration: a ruled game
+directory, a clean test sheet, restrained sound cues, and a score report at the
+end. Each report shows the run score, saved personal best, fixed BrainHacker
+average, percentile, and equivalent rank out of 100. The `/stats` page lists
+the same stable references for all eleven tests and, when signed in, compares
+them with the account's saved bests.
 
-Visual feedback is drawn locally with the browser Canvas API. Sound cues are
-synthesized with the Web Audio API and can be muted from the header, so the GUI
-does not download media, fonts, trackers, or other third-party assets.
+Sound cues are synthesized locally with the Web Audio API and can be muted
+from the header. The interface does not download fonts, media, trackers, or
+other third-party assets.
 
 Install the project and start the development server:
 
@@ -39,7 +40,45 @@ poetry run gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 brain_games.ap
 ```
 
 Use one worker because active browser runs are intentionally held in memory;
-the leaderboard itself remains file-backed and persistent.
+accounts and best scores are file-backed and persistent.
+
+## Fixed averages and percentiles
+
+BrainHacker does not use the live leaderboard to calculate statistics. Every
+game has a fixed reference round-accuracy assumption. Because a run ends after
+three misses, its score reference is a negative-binomial model with:
+
+```text
+average score = 3p / (1 - p)
+```
+
+The score percentile is the cumulative probability from that same fixed
+model, rounded to a rank out of 100. These are **BrainHacker benchmarks**:
+stable product baselines for comparison, not measured population norms,
+scientific results, IQ scores, or medical claims. Changing players or
+leaderboard scores never changes them.
+
+## Accounts and saved scores
+
+Register at `/register` with a 3–24 character username and a password of at
+least eight characters. Usernames are case-insensitive and reserved for their
+account. Passwords are stored only as Werkzeug password hashes, and signed-in
+runs are attributed on the server rather than trusting a player name sent by
+the browser.
+
+For a public HTTPS deployment, set a persistent random session key and secure
+cookies:
+
+```console
+export BRAIN_GAMES_SECRET_KEY='replace-with-a-long-random-secret'
+export BRAIN_GAMES_SECURE_COOKIES=1
+```
+
+The current account and leaderboard backends use local files, which is useful
+for development and a single server with a persistent disk. Vercel Functions
+do not provide durable local filesystem storage; connect these stores to a
+managed database before the public Vercel deployment so logins and scores
+survive redeploys and scale across instances.
 
 ## Games
 
@@ -141,6 +180,14 @@ retained. By default, scores are stored at:
 ```
 
 Set `BRAIN_GAMES_DATA_DIR` to choose a different data directory.
+
+Registered accounts are stored separately at:
+
+```text
+~/.brain_games/accounts.json
+```
+
+The account file is written with owner-only permissions on POSIX systems.
 
 ## Tests and checks
 

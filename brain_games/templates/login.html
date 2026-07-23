@@ -1,0 +1,58 @@
+{% extends "layout.html" %}
+
+{% block title %}Log in — BrainHacker{% endblock %}
+
+{% block content %}
+<section class="account-page" aria-labelledby="loginTitle">
+    <div class="account-sheet">
+        <p class="eyebrow">Your scores</p>
+        <h1 id="loginTitle">Log in to BrainHacker</h1>
+        <p class="account-intro">Use your account to save personal bests and see your percentile history.</p>
+
+        {% if error %}
+            <div class="form-alert" role="alert">{{ error }}</div>
+        {% endif %}
+        {% if errors %}
+            <div class="form-alert" role="alert">
+                <p>Please check the following:</p>
+                <ul>
+                    {% if errors is mapping %}
+                        {% for field, messages in errors.items() %}
+                            {% if messages is string %}
+                                <li>{{ messages }}</li>
+                            {% else %}
+                                {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+                            {% endif %}
+                        {% endfor %}
+                    {% elif errors is string %}
+                        <li>{{ errors }}</li>
+                    {% else %}
+                        {% for message in errors %}<li>{{ message }}</li>{% endfor %}
+                    {% endif %}
+                </ul>
+            </div>
+        {% endif %}
+
+        <form class="account-form" method="post" action="/login">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true)|e }}">
+
+            <div class="form-field">
+                <label for="username">Username</label>
+                <input id="username" name="username" type="text" minlength="3" maxlength="24"
+                       value="{{ form.username|default('', true)|e }}"
+                       autocomplete="username" autocapitalize="none" spellcheck="false" required>
+            </div>
+
+            <div class="form-field">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" minlength="8"
+                       autocomplete="current-password" required>
+            </div>
+
+            <button class="primary-button account-submit" type="submit">Log in</button>
+        </form>
+
+        <p class="account-switch">New here? <a href="/register">Create an account</a>.</p>
+    </div>
+</section>
+{% endblock %}

@@ -249,7 +249,7 @@ def _add_browser_headers(response):
         'camera=(), geolocation=(), microphone=()'
     )
     private_page = request.path in {
-        '/login', '/register', '/logout', '/stats',
+        '/login', '/register', '/logout', '/player', '/stats',
     }
     if any((
         request.path.startswith('/api/'),
@@ -278,7 +278,16 @@ def index(slug=None):
 
 @routes.get('/stats')
 def statistics():
-    user = _current_user()
+    rows = _score_rows(_current_user())
+
+    return render_template(
+        'stats.html',
+        benchmarks=rows,
+        personal_stats=rows,
+    )
+
+
+def _score_rows(user):
     personal_bests = {}
     if user is not None:
         entries = _store().leaders(
@@ -305,11 +314,20 @@ def statistics():
             entry['played_at'] if entry is not None else None
         )
         rows.append(row)
+    return rows
 
+
+@routes.get('/player')
+def player():
+    user = _current_user()
+    rows = _score_rows(user)
     return render_template(
-        'stats.html',
-        benchmarks=rows,
-        personal_stats=rows,
+        'player.html',
+        score_rows=rows,
+        played_count=sum(
+            row['personal_score'] is not None
+            for row in rows
+        ),
     )
 
 
@@ -317,7 +335,7 @@ def statistics():
 def login():
     if request.method == 'GET':
         if _current_user() is not None:
-            return redirect(url_for('brain_games.statistics'))
+            return redirect(url_for('brain_games.player'))
         return _auth_form('login.html')
 
     if not _has_valid_csrf():
@@ -341,14 +359,14 @@ def login():
     session.clear()
     session[SESSION_USER_KEY] = account['username']
     session.permanent = True
-    return redirect(url_for('brain_games.statistics'))
+    return redirect(url_for('brain_games.player'))
 
 
 @routes.route('/register', methods=('GET', 'POST'))
 def register():
     if request.method == 'GET':
         if _current_user() is not None:
-            return redirect(url_for('brain_games.statistics'))
+            return redirect(url_for('brain_games.player'))
         return _auth_form('register.html')
 
     if not _has_valid_csrf():
@@ -365,7 +383,7 @@ def register():
     session.clear()
     session[SESSION_USER_KEY] = account['username']
     session.permanent = True
-    return redirect(url_for('brain_games.statistics'))
+    return redirect(url_for('brain_games.player'))
 
 
 def _create_account_from_form():

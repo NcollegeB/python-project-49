@@ -2,7 +2,7 @@ import {ArcadeAudio} from './audio.js';
 
 
 const PLAYER_STORAGE_KEY = 'brainhacker-player-name';
-const DEFAULT_PLAYER = 'Player';
+const GUEST_PREFIX = 'Guest#';
 const FEEDBACK_DELAY = 620;
 
 const iconBySlug = {
@@ -50,6 +50,7 @@ const state = {
 };
 
 let audio;
+let guestPlayerName;
 
 
 function scrollBehavior() {
@@ -67,8 +68,8 @@ function getElement(id) {
 function cacheDom() {
     [
         'homeView', 'gameView', 'gameGrid',
-        'startCulmination', 'browseGames', 'leaderboardButton',
-        'soundToggle', 'backButton', 'stageCategory', 'stageTitle',
+        'leaderboardButton', 'soundToggle', 'backButton',
+        'stageCategory', 'stageTitle',
         'stageRules', 'scoreValue', 'livesValue', 'roundValue',
         'cycleTrack', 'briefingState', 'activeState', 'resultState',
         'briefingIcon', 'briefingTitle', 'briefingDescription',
@@ -78,7 +79,7 @@ function cacheDom() {
         'resultAverage', 'resultPercentile', 'resultRank',
         'resultMessage', 'retryButton', 'resultMenuButton',
         'leaderboardDialog', 'leaderboardRows', 'leaderboardFilter',
-        'closeLeaderboard', 'playerName',
+        'closeLeaderboard', 'briefingFeedback',
     ].forEach((id) => {
         dom[id] = getElement(id);
     });
@@ -112,12 +113,37 @@ async function api(path, options = {}) {
 
 
 function readPlayerName() {
-    try {
-        return window.localStorage.getItem(PLAYER_STORAGE_KEY)
-            || DEFAULT_PLAYER;
-    } catch (_error) {
-        return DEFAULT_PLAYER;
+    if (guestPlayerName) {
+        return guestPlayerName;
     }
+    try {
+        const stored = window.localStorage.getItem(PLAYER_STORAGE_KEY);
+        if (/^Guest#[0-9a-f]{12}$/.test(stored || '')) {
+            guestPlayerName = stored;
+            return guestPlayerName;
+        }
+    } catch (_error) {
+        // A temporary guest identity still works without browser storage.
+    }
+    const bytes = new Uint8Array(6);
+    if (window.crypto?.getRandomValues) {
+        window.crypto.getRandomValues(bytes);
+    } else {
+        bytes.forEach((_value, index) => {
+            bytes[index] = Math.floor(Math.random() * 256);
+        });
+    }
+    const suffix = Array.from(
+        bytes,
+        (value) => value.toString(16).padStart(2, '0'),
+    ).join('');
+    guestPlayerName = `${GUEST_PREFIX}${suffix}`;
+    try {
+        window.localStorage.setItem(PLAYER_STORAGE_KEY, guestPlayerName);
+    } catch (_error) {
+        // The in-memory identity remains stable for this page load.
+    }
+    return guestPlayerName;
 }
 
 
@@ -126,25 +152,7 @@ function currentPlayerName() {
     if (accountName) {
         return accountName;
     }
-    const value = (dom.playerName?.value || '').trim();
-    return value.slice(0, 24) || DEFAULT_PLAYER;
-}
-
-
-function savePlayerName() {
-    if (document.body.dataset.currentUser) {
-        return;
-    }
-    const name = currentPlayerName();
-    if (dom.playerName) {
-        dom.playerName.value = name;
-    }
-    try {
-        window.localStorage.setItem(PLAYER_STORAGE_KEY, name);
-    } catch (_error) {
-        // Playing remains available when browser storage is unavailable.
-    }
-    refreshPersonalBests();
+    return readPlayerName();
 }
 
 
@@ -193,22 +201,22 @@ function renderCards() {
     if (!dom.gameGrid) {
         return;
     }
-    const visibleGames = state.catalog.filter(
-        (game) => game.slug !== 'culmination',
-    );
     dom.gameGrid.replaceChildren();
 
-    visibleGames.forEach((game) => {
-        const card = document.createElement('article');
+    state.catalog.forEach((game) => {
+        const card = document.createElement('a');
         card.className = 'game-card';
+        card.href = `/play/${encodeURIComponent(game.slug)}`;
         card.dataset.category = categoryClass(game.category);
-        const top = document.createElement('div');
-        top.className = 'game-card__top';
-        top.append(
-            createTextElement('span', 'game-card__category', game.category),
+        card.dataset.game = game.slug;
+        const picture = createTextElement(
+            'span',
+            'game-card__picture',
+            game.icon || iconBySlug[game.slug] || '•',
         );
+        picture.setAttribute('aria-hidden', 'true');
         card.append(
-            top,
+            picture,
             createTextElement('h3', 'game-card__title', game.name),
             createTextElement(
                 'p',
@@ -216,48 +224,22 @@ function renderCards() {
                 game.description || game.rules,
             ),
         );
-
-        const footer = document.createElement('div');
-        footer.className = 'game-card__footer';
-        const best = state.personalBests.get(game.slug);
-        const benchmark = state.benchmarks.get(game.slug);
-        footer.append(
-            createTextElement(
-                'span',
-                'game-card__best',
-                best === undefined ? 'No score yet' : `Best ${best}`,
-            ),
-            createTextElement(
-                'span',
-                'game-card__average',
-                benchmark
-                    ? `Average ${benchmark.average_score}`
-                    : 'Fixed benchmark',
-            ),
-        );
-        const play = createTextElement('button', 'game-card__cta', 'Play →');
-        play.type = 'button';
-        play.setAttribute('aria-label', `Play ${game.name}`);
-        play.addEventListener('click', () => openBriefing(game.slug));
-        footer.append(play);
-        card.append(footer);
         card.addEventListener('click', (event) => {
-            if (!event.target.closest('button')) {
-                openBriefing(game.slug);
+            if (
+                event.defaultPrevented
+                || event.button !== 0
+                || event.metaKey
+                || event.ctrlKey
+                || event.shiftKey
+                || event.altKey
+            ) {
+                return;
             }
+            event.preventDefault();
+            openBriefing(game.slug);
         });
         dom.gameGrid.append(card);
     });
-}
-
-
-function updateHeroCulmination() {
-    const game = findGame('culmination');
-    if (!game || !dom.startCulmination) {
-        return;
-    }
-    const best = state.personalBests.get('culmination');
-    dom.startCulmination.dataset.best = best === undefined ? '—' : best;
 }
 
 
@@ -316,6 +298,8 @@ function openBriefing(slug, options = {}) {
     dom.briefingIcon.textContent = iconBySlug[slug] || '•';
     dom.briefingTitle.textContent = game.name;
     dom.briefingDescription.textContent = game.description || game.rules;
+    dom.briefingFeedback.textContent = '';
+    dom.briefingFeedback.hidden = true;
     updateHud({score: 0, lives: 3});
     dom.roundValue.textContent = 'Ready';
     dom.cycleTrack.replaceChildren();
@@ -365,6 +349,8 @@ async function startRun() {
     state.startSequence = requestSequence;
     state.busy = true;
     dom.startRunButton.disabled = true;
+    dom.briefingFeedback.textContent = '';
+    dom.briefingFeedback.hidden = true;
     audio.unlock();
     audio.cue('start');
     try {
@@ -397,7 +383,8 @@ async function startRun() {
         renderRound(state.run.round);
     } catch (error) {
         if (requestSequence === state.startSequence) {
-            setFeedback(error.message, 'wrong');
+            dom.briefingFeedback.textContent = error.message;
+            dom.briefingFeedback.hidden = false;
         }
     } finally {
         if (requestSequence === state.startSequence) {
@@ -878,7 +865,10 @@ async function backToHome(options = {}) {
             updateHistory(null, options.replaceHistory);
         }
         renderCards();
-        window.setTimeout(() => dom.startCulmination?.focus(), 0);
+        window.setTimeout(
+            () => dom.gameGrid?.querySelector('.game-card')?.focus(),
+            0,
+        );
     } finally {
         state.navigating = false;
     }
@@ -905,7 +895,6 @@ async function refreshPersonalBests() {
             }
         });
         renderCards();
-        updateHeroCulmination();
     } catch (_error) {
         // The games remain playable if leaderboard storage is unavailable.
     }
@@ -986,15 +975,6 @@ function closeLeaderboard() {
 
 
 function bindEvents() {
-    dom.startCulmination?.addEventListener(
-        'click',
-        () => openBriefing('culmination'),
-    );
-    dom.browseGames?.addEventListener('click', () => {
-        getElement('gameLibrary')?.scrollIntoView({
-            behavior: scrollBehavior(),
-        });
-    });
     dom.startRunButton?.addEventListener('click', startRun);
     dom.retryButton?.addEventListener('click', startRun);
     dom.resultMenuButton?.addEventListener('click', () => backToHome());
@@ -1006,7 +986,6 @@ function bindEvents() {
     dom.leaderboardButton?.addEventListener('click', openLeaderboard);
     dom.closeLeaderboard?.addEventListener('click', closeLeaderboard);
     dom.leaderboardFilter?.addEventListener('change', renderLeaderboard);
-    dom.playerName?.addEventListener('change', savePlayerName);
     dom.leaderboardDialog?.addEventListener('click', (event) => {
         if (event.target === dom.leaderboardDialog) {
             closeLeaderboard();
@@ -1087,11 +1066,6 @@ function bindEvents() {
 async function initialise() {
     cacheDom();
     audio = new ArcadeAudio(dom.soundToggle);
-    if (dom.playerName) {
-        const accountName = document.body.dataset.currentUser;
-        dom.playerName.value = accountName || readPlayerName();
-        dom.playerName.readOnly = Boolean(accountName);
-    }
     bindEvents();
 
     try {

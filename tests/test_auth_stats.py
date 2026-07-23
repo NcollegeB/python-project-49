@@ -75,7 +75,7 @@ class AuthAndStatisticsTest(unittest.TestCase):
         response = self.register('Ada_1')
 
         self.assertEqual(302, response.status_code)
-        self.assertTrue(response.headers['Location'].endswith('/stats'))
+        self.assertTrue(response.headers['Location'].endswith('/player'))
         cookie = response.headers['Set-Cookie']
         self.assertIn('HttpOnly', cookie)
         self.assertIn('SameSite=Lax', cookie)
@@ -98,13 +98,18 @@ class AuthAndStatisticsTest(unittest.TestCase):
             limit=100,
         )
 
-        stats = self.client.get('/stats').get_data(as_text=True)
+        player_page = self.client.get('/player').get_data(as_text=True)
         self.assertEqual(1, len(stored))
         self.assertEqual(0, stored[0]['score'])
-        self.assertIn('ada_1', stats)
-        self.assertIn('Even or Odd', stats)
-        self.assertIn('BrainHacker benchmark', stats)
-        self.assertIn('1st percentile', stats)
+        self.assertIn('ada_1', player_page)
+        self.assertIn('Even or Odd', player_page)
+        self.assertIn('data-game="even"', player_page)
+        self.assertIn('data-score="0"', player_page)
+        self.assertIn('1 of 11 games played', player_page)
+        self.assertEqual(
+            11,
+            player_page.count('class="player-score-card"'),
+        )
 
     def test_registered_username_cannot_be_used_anonymously(self):
         self.accounts.create('Reserved_User', 'correct-horse')
@@ -128,6 +133,7 @@ class AuthAndStatisticsTest(unittest.TestCase):
 
         self.assertEqual(302, registered.status_code)
         stats = self.client.get('/stats').get_data(as_text=True)
+        player_page = self.client.get('/player').get_data(as_text=True)
         filtered = self.client.get(
             '/api/leaderboard?player=future_user&limit=100',
         ).get_json()['entries']
@@ -137,6 +143,8 @@ class AuthAndStatisticsTest(unittest.TestCase):
 
         self.assertNotIn('999', stats)
         self.assertNotIn('998', stats)
+        self.assertNotIn('999', player_page)
+        self.assertNotIn('998', player_page)
         self.assertEqual([], filtered)
         self.assertEqual([], public)
 
@@ -192,6 +200,7 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertEqual(401, rejected.status_code)
         self.assertIn('do not match', rejected.get_data(as_text=True))
         self.assertEqual(302, accepted.status_code)
+        self.assertTrue(accepted.headers['Location'].endswith('/player'))
         self.assertTrue(self.client.get('/api/me').get_json()['authenticated'])
 
         logout_token = csrf_token(self.client.get('/stats'))
@@ -242,6 +251,17 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertIn('27.0', document)
         self.assertEqual('no-store', response.headers['Cache-Control'])
 
+    def test_anonymous_player_page_prompts_for_an_account(self):
+        response = self.client.get('/player')
+        document = response.get_data(as_text=True)
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual('no-store', response.headers['Cache-Control'])
+        self.assertIn('Your scores live here.', document)
+        self.assertIn('href="/login"', document)
+        self.assertIn('href="/register"', document)
+        self.assertNotIn('class="player-score-card"', document)
+
     def test_paper_test_branding_replaces_the_old_visual_system(self):
         document = self.client.get('/').get_data(as_text=True)
         stylesheet_path = Path(__file__).parents[1].joinpath(
@@ -250,18 +270,32 @@ class AuthAndStatisticsTest(unittest.TestCase):
             'main.css',
         )
         stylesheet = stylesheet_path.read_text(encoding='utf-8')
+        javascript = stylesheet_path.with_name('app.js').read_text(
+            encoding='utf-8',
+        )
 
         self.assertIn('BrainHacker', document)
-        self.assertIn('Short games.', document)
+        self.assertIn('test your intelligence', document)
+        self.assertNotIn('Short games.', document)
+        self.assertNotIn('Cognitive practice', document)
         self.assertIn('resultAverage', document)
         self.assertIn('resultPercentile', document)
         self.assertIn('resultRank', document)
+        self.assertIn(
+            'grid-template-columns: repeat(3, minmax(0, 1fr))',
+            stylesheet,
+        )
+        self.assertIn('game.icon', javascript)
+        self.assertNotIn('game-card__best', javascript)
+        self.assertIn("const GUEST_PREFIX = 'Guest#';", javascript)
+        self.assertIn('window.crypto.getRandomValues(bytes)', javascript)
+        self.assertIn('briefingFeedback.hidden = false', javascript)
         self.assertNotIn('Night Arcade', document)
         self.assertNotIn('effectsCanvas', document)
         self.assertNotIn('gradient', stylesheet)
 
     def test_theme_control_is_shared_by_every_page(self):
-        for path in ('/', '/stats', '/login', '/register'):
+        for path in ('/', '/player', '/stats', '/login', '/register'):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 document = response.get_data(as_text=True)

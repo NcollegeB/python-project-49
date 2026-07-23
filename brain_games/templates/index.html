@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}BrainHacker — Short games. Clear scores.{% endblock %}
+{% block title %}BrainHacker — Test your intelligence{% endblock %}
 
 {% block game_navigation %}
 <button class="nav-button" id="leaderboardButton" type="button">Leaderboard</button>
@@ -13,75 +13,15 @@
 
 {% block content %}
 <section class="home-view" id="homeView" aria-labelledby="heroTitle">
-    <div class="hero">
-        <div class="hero-copy">
-            <p class="eyebrow">Cognitive practice, without the clutter</p>
-            <h1 id="heroTitle">Short games.<br>Clear scores.</h1>
-            <p class="hero-summary">
-                Practice memory, attention, language, and logic in quick tests.
-                Every run gives you three lives and continues until they are gone.
-            </p>
-
-            <div class="player-field">
-                {% if current_user %}
-                    <label for="playerName">Scores save to</label>
-                    <div class="player-input-wrap is-account">
-                        <input id="playerName" name="player-name" type="text" maxlength="24"
-                               value="{{ current_user.username|default(current_user, true)|e }}"
-                               readonly aria-readonly="true">
-                        <span class="saved-label">Signed in</span>
-                    </div>
-                {% else %}
-                    <label for="playerName">Player name</label>
-                    <div class="player-input-wrap">
-                        <input id="playerName" name="player-name" type="text" maxlength="24"
-                               autocomplete="nickname" spellcheck="false" placeholder="Player">
-                    </div>
-                    <p class="field-note"><a href="/login">Log in</a> to keep your scores tied to your account.</p>
-                {% endif %}
-            </div>
-
-            <div class="hero-actions">
-                <button class="primary-button" id="startCulmination" type="button">
-                    Start the full test <span class="button-arrow" aria-hidden="true">→</span>
-                </button>
-                <a class="secondary-button" id="browseGames" href="#gameLibrary">Choose a single game</a>
-            </div>
-        </div>
-
-        <dl class="test-notes" aria-label="How BrainHacker works">
-            <div>
-                <dt>Lives</dt>
-                <dd>3 per run</dd>
-            </div>
-            <div>
-                <dt>Length</dt>
-                <dd>Until you miss three</dd>
-            </div>
-            <div>
-                <dt>Benchmark</dt>
-                <dd>Fixed, not crowd-sourced</dd>
-            </div>
-            <div>
-                <dt>Tests</dt>
-                <dd>10 + culmination</dd>
-            </div>
-        </dl>
-    </div>
+    <header class="home-intro">
+        <h1 id="heroTitle">test your intelligence</h1>
+    </header>
 
     <section class="game-library" id="gameLibrary" aria-labelledby="libraryTitle">
-        <div class="section-heading">
-            <div>
-                <p class="eyebrow">Test directory</p>
-                <h2 id="libraryTitle">Choose a test</h2>
-            </div>
-            <p>Each test is endless. One correct answer earns one point; three misses end the run.</p>
-        </div>
+        <h2 class="visually-hidden" id="libraryTitle">Choose a game</h2>
 
-        <div class="filter-bar" id="filterBar" aria-hidden="true" hidden></div>
-
-        <div class="game-grid" id="gameGrid" aria-live="polite">
-            <p class="loading-note">Loading the test directory…</p>
+        <div class="game-grid" id="gameGrid">
+            <p class="loading-note" role="status">Loading games…</p>
         </div>
     </section>
 </section>
@@ -127,6 +67,8 @@
                 <p class="eyebrow">Instructions</p>
                 <h2 id="briefingTitle">Prepare to focus</h2>
                 <p id="briefingDescription">Your first round begins when you are ready.</p>
+                <p class="briefing-feedback" id="briefingFeedback"
+                   role="alert" hidden></p>
                 <button class="primary-button start-run-button" id="startRunButton" type="button">
                     Begin test <span class="button-arrow" aria-hidden="true">→</span>
                 </button>
@@ -191,7 +133,9 @@
 
                 <p class="benchmark-note">
                     Percentiles use a fixed, model-based BrainHacker benchmark—not live player data
-                    or a scientific population study. <a href="/stats">See the statistics</a>.
+                    or a scientific population study.
+                    <a href="/player">View your Player page</a> or
+                    <a href="/stats">see the statistics</a>.
                 </p>
                 <div class="result-actions">
                     <button class="primary-button" id="retryButton" type="button">Try again</button>

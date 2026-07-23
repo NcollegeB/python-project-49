@@ -83,6 +83,7 @@ class WebAppTest(unittest.TestCase):
         self.assertIn('/static/app.js', document)
         self.assertIn('/static/theme.js', document)
         self.assertIn('id="themeSelect"', document)
+        self.assertIn('href="/player"', document)
         self.assertIn('value="dark"', document)
         self.assertIn('value="grey"', document)
         self.assertIn('value="high-contrast"', document)

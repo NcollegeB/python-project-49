@@ -1014,6 +1014,9 @@ function bindEvents() {
     });
 
     document.addEventListener('keydown', (event) => {
+        if (event.target?.closest?.('#themeSelect')) {
+            return;
+        }
         if (event.key === 'Escape' && dom.leaderboardDialog?.open) {
             return;
         }

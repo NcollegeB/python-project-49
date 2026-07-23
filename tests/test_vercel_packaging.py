@@ -12,6 +12,7 @@ ASSET_NAMES = (
     'audio.js',
     'effects.js',
     'main.css',
+    'theme.js',
 )
 
 

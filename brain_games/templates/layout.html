@@ -7,6 +7,7 @@
     <meta name="color-scheme" content="light">
     <meta name="description" content="BrainHacker is a collection of short, focused brain games with clear scores and fixed benchmarks.">
     <title>{% block title %}BrainHacker{% endblock %}</title>
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body
@@ -26,6 +27,19 @@
                 <a href="/#gameLibrary">Games</a>
                 <a href="/stats">Statistics</a>
                 {% block game_navigation %}{% endblock %}
+
+                <div class="theme-control">
+                    <label class="visually-hidden" for="themeSelect">
+                        Color theme
+                    </label>
+                    <select class="theme-select" id="themeSelect"
+                            aria-label="Color theme">
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                        <option value="grey">Grey</option>
+                        <option value="high-contrast">High contrast</option>
+                    </select>
+                </div>
 
                 {% if current_user %}
                     <span class="account-name" title="Signed in">

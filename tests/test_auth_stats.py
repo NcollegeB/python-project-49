@@ -260,6 +260,30 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertNotIn('effectsCanvas', document)
         self.assertNotIn('gradient', stylesheet)
 
+    def test_theme_control_is_shared_by_every_page(self):
+        for path in ('/', '/stats', '/login', '/register'):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                document = response.get_data(as_text=True)
+
+                self.assertEqual(200, response.status_code)
+                self.assertIn('/static/theme.js', document)
+                self.assertIn('id="themeSelect"', document)
+                self.assertIn('value="light"', document)
+                self.assertIn('value="dark"', document)
+                self.assertIn('value="grey"', document)
+                self.assertIn('value="high-contrast"', document)
+
+        stylesheet_path = Path(__file__).parents[1].joinpath(
+            'brain_games',
+            'static',
+            'main.css',
+        )
+        stylesheet = stylesheet_path.read_text(encoding='utf-8')
+        self.assertIn(':root[data-theme="dark"]', stylesheet)
+        self.assertIn(':root[data-theme="grey"]', stylesheet)
+        self.assertIn(':root[data-theme="high-contrast"]', stylesheet)
+
     def test_secure_cookie_mode_requires_a_persistent_secret(self):
         environment = {
             'BRAIN_GAMES_SECURE_COOKIES': '1',

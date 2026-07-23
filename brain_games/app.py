@@ -28,6 +28,7 @@ from brain_games.web_engine import GAME_CATALOG
 from brain_games.web_engine import RunEndedError
 from brain_games.web_engine import RunStore
 from brain_games.web_engine import StaleRoundError
+from brain_games.web_engine import TIMING_MODES
 from brain_games.web_engine import UnknownGameError
 from brain_games.web_engine import UnknownRunError
 from brain_games.web_engine import game_catalog
@@ -178,10 +179,16 @@ def _public_run(payload):
     public = dict(payload)
     player = public.get('player')
     if isinstance(player, str) and player.startswith(ACCOUNT_PLAYER_PREFIX):
-        account = _account_from_player(player)
-        public['player'] = (
-            account['username'] if account is not None else 'signed-in player'
-        )
+        session_username = session.get(SESSION_USER_KEY)
+        if _is_text(session_username):
+            public['player'] = session_username
+        else:
+            account = _account_from_player(player)
+            public['player'] = (
+                account['username']
+                if account is not None
+                else 'signed-in player'
+            )
     return public
 
 
@@ -474,6 +481,15 @@ def create_run():
     payload, error = _request_payload(('game',))
     if error:
         return error
+    timing_mode = payload.get('timing_mode', 'standard')
+    is_text_mode = isinstance(timing_mode, str)
+    valid_timing_mode = is_text_mode and timing_mode in TIMING_MODES
+    if not valid_timing_mode:
+        return _error_response(
+            'invalid_request',
+            'timing_mode must be standard, relaxed, or self-paced.',
+            400,
+        )
     player, identity_error = _run_player(payload)
     if identity_error is not None:
         return identity_error
@@ -484,7 +500,12 @@ def create_run():
             400,
         )
     return jsonify(
-        _public_run(_store().create(payload['game'], player)),
+        _public_run(_store().create(
+            payload['game'],
+            player,
+            ranked=timing_mode == 'standard',
+            timing_mode=timing_mode,
+        )),
     ), 201
 
 

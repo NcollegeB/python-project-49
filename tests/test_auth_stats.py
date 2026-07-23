@@ -8,6 +8,7 @@ from brain_games.accounts import AccountStore
 from brain_games.app import create_app
 from brain_games.leaderboard import Leaderboard
 from brain_games.web_engine import RunStore
+from brain_games.web_engine import SCORE_GAME_PREFIX
 
 
 CSRF_PATTERN = re.compile(
@@ -65,8 +66,12 @@ class AuthAndStatisticsTest(unittest.TestCase):
             'not measured population',
             benchmarks[0]['disclaimer'],
         )
-        self.assertEqual(13, scored.get_json()['percentile'])
-        self.assertEqual(13, scored.get_json()['rank_out_of_100'])
+        self.assertEqual(1, scored.get_json()['percentile'])
+        self.assertEqual(1, scored.get_json()['rank_out_of_100'])
+        self.assertEqual(
+            1,
+            scored.get_json()['percentile_rank_out_of_100'],
+        )
         self.assertEqual(400, invalid.status_code)
         self.assertEqual(400, negative.status_code)
         self.assertEqual(404, unknown.status_code)
@@ -123,10 +128,14 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertEqual('reserved_player', response.get_json()['error'])
 
     def test_account_never_inherits_a_pre_registration_anonymous_score(self):
-        self.store._leaderboard.record('Future_User', 'even', 999)
+        self.store._leaderboard.record(
+            'Future_User',
+            '{}even'.format(SCORE_GAME_PREFIX),
+            999,
+        )
         self.store._leaderboard.record(
             'account:Future_User',
-            'prime',
+            '{}prime'.format(SCORE_GAME_PREFIX),
             998,
         )
         registered = self.register('Future_User')
@@ -160,11 +169,19 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.accounts.create('Grace', 'correct-horse')
         self.store._leaderboard.record(
             'account:{}'.format(ada['account_id']),
-            'even',
+            '{}even'.format(SCORE_GAME_PREFIX),
             10,
         )
-        self.store._leaderboard.record('GRACE', 'even', 9)
-        self.store._leaderboard.record('Visitor', 'even', 8)
+        self.store._leaderboard.record(
+            'GRACE',
+            '{}even'.format(SCORE_GAME_PREFIX),
+            9,
+        )
+        self.store._leaderboard.record(
+            'Visitor',
+            '{}even'.format(SCORE_GAME_PREFIX),
+            8,
+        )
 
         with mock.patch.object(
                 self.accounts,
@@ -248,7 +265,7 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertIn('BrainHacker benchmark', document)
         self.assertIn('not measured population data', document)
-        self.assertIn('27.0', document)
+        self.assertIn('13.9', document)
         self.assertEqual('no-store', response.headers['Cache-Control'])
 
     def test_anonymous_player_page_prompts_for_an_account(self):

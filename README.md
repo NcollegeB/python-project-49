@@ -3,8 +3,10 @@
 BrainHacker is a deliberately simple, paper-inspired browser home for ten
 endless brain games plus a mixed Culmination Test. Every correct answer adds
 one point, every mistake costs one of three lives, and the run ends when no
-lives remain. Create an account to keep a personal best for every test, or
-play without an account under a temporary display name.
+lives remain. Every three correct answers advances one of five difficulty
+levels; misses do not erase level progress, and level 5 continues for as long
+as the player can survive. Create an account to keep a personal best for every
+test, or play without an account under a temporary display name.
 
 The original `brain-games` terminal hub remains available with the same games,
 three-life rules, and persistent leaderboard.
@@ -42,21 +44,26 @@ poetry run gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 brain_games.ap
 Without a database connection, use one worker because active browser runs are
 held in memory; accounts and best scores remain file-backed and persistent.
 
-## Fixed averages and percentiles
+## Levels, timing, averages, and percentiles
+
+Browser games offer three timing modes before a run: Standard, Relaxed, and
+Self-paced. Standard uses the published game clock and is eligible for saved
+scores. Relaxed doubles answer deadlines, while Self-paced removes answer
+deadlines; both remain available for accessible practice without entering the
+ranked score table. Number Memory still uses its intentional preview phase in
+every mode.
 
 BrainHacker does not use the live leaderboard to calculate statistics. Every
-game has a fixed reference round-accuracy assumption. Because a run ends after
-three misses, its score reference is a negative-binomial model with:
+game has five fixed reference round-accuracy assumptions, one for each
+difficulty level. The model advances after every three correct answers,
+continues indefinitely at level 5, and ends after three total misses. It
+calculates a deterministic score distribution for those rules, then reports
+the expected average and the cumulative probability for a score as a
+percentile rank out of 100.
 
-```text
-average score = 3p / (1 - p)
-```
-
-The score percentile is the cumulative probability from that same fixed
-model, rounded to a rank out of 100. These are **BrainHacker benchmarks**:
-stable product baselines for comparison, not measured population norms,
-scientific results, IQ scores, or medical claims. Changing players or
-leaderboard scores never changes them.
+These are **BrainHacker benchmarks**: stable product baselines for comparison,
+not measured population norms, scientific results, IQ scores, or medical
+claims. Changing players or leaderboard scores never changes them.
 
 ## Accounts and saved scores
 

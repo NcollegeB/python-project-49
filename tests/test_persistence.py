@@ -19,6 +19,7 @@ from brain_games.persistence import ensure_schema
 from brain_games.persistence import PostgresAccountStore
 from brain_games.persistence import PostgresLeaderboard
 from brain_games.persistence import PostgresRunStore
+from brain_games.persistence import RUN_STATE_VERSION
 from brain_games.persistence import scores_table
 from brain_games.persistence import serialize_run_state
 from brain_games.web_engine import RunStore
@@ -118,6 +119,37 @@ class DatabasePersistenceTest(unittest.TestCase):
             self.leaderboard.top(game='EVEN', player='ADA'),
         )
 
+    def test_leaderboard_can_isolate_a_literal_version_prefix(self):
+        current = self.leaderboard.record('Ada', 'r2:even', 7)
+        second_current = self.leaderboard.record('Lin', 'R2:prime', 6)
+        self.leaderboard.record('Grace', 'even', 99)
+        self.leaderboard.record('Mina', 'r2%:gcd', 98)
+        self.leaderboard.record('Noor', 'r2_:calc', 97)
+
+        entries = self.leaderboard.top(game_prefix=' R2: ')
+
+        self.assertEqual([current, second_current], entries)
+        self.assertEqual(
+            [current],
+            self.leaderboard.top(game='r2:EVEN', game_prefix='r2:'),
+        )
+        self.assertEqual(
+            ['r2%:gcd'],
+            [
+                entry['game']
+                for entry in self.leaderboard.top(game_prefix='r2%:')
+            ],
+        )
+        self.assertEqual(
+            ['r2_:calc'],
+            [
+                entry['game']
+                for entry in self.leaderboard.top(game_prefix='r2_:')
+            ],
+        )
+        with self.assertRaises(TypeError):
+            self.leaderboard.top(game_prefix=2)
+
     def test_player_key_allows_maximum_expanding_casefold(self):
         player = 'ß' * 64
         entry = self.leaderboard.record(player, 'even', 7)
@@ -156,6 +188,36 @@ class DatabasePersistenceTest(unittest.TestCase):
                 answer,
             )
 
+    def test_cross_instance_round_sequence_preserves_random_state(self):
+        control = RunStore(random_factory=lambda: random.Random(4))
+        control_run = control.create('calc', 'Ada')
+        database_run = self.first.create('calc', 'Ada')
+        self.assertEqual(
+            control_run['round']['prompt'],
+            database_run['round']['prompt'],
+        )
+
+        control_next = control.answer(
+            control_run['run_id'],
+            control_run['round']['round_id'],
+            control._runs[control_run['run_id']].round['expected_answer'],
+        )
+        with self.engine.begin() as connection:
+            database_state = self.first._locked_state(
+                connection,
+                database_run['run_id'],
+            )
+        database_next = self.second.answer(
+            database_run['run_id'],
+            database_run['round']['round_id'],
+            database_state.round['expected_answer'],
+        )
+
+        self.assertEqual(
+            control_next['round']['prompt'],
+            database_next['round']['prompt'],
+        )
+
     def test_cross_instance_quit_is_idempotent_and_records_once(self):
         started = self.first.create('prime', 'Grace')
 
@@ -190,6 +252,32 @@ class DatabasePersistenceTest(unittest.TestCase):
         self.assertEqual(1, len(leaders))
         self.assertEqual(0, leaders[0]['score'])
 
+    def test_unranked_run_persists_but_never_records_a_score(self):
+        started = self.first.create(
+            'even',
+            'Practice',
+            ranked=False,
+            timing_mode='self-paced',
+        )
+        restored = self.second.quit(started['run_id'])
+
+        self.assertFalse(started['ranked'])
+        self.assertFalse(restored['ranked'])
+        self.assertEqual('self-paced', restored['timing_mode'])
+        self.assertEqual(0, started['round']['time_limit_ms'])
+        self.assertEqual([], self.leaderboard.top(player='practice'))
+        self.assertEqual([], self.first.leaders(player='practice'))
+
+    def test_ranked_database_score_uses_current_ruleset_privately(self):
+        started = self.first.create('prime', 'Current')
+        self.second.quit(started['run_id'])
+
+        raw = self.leaderboard.top(player='current')
+        public = self.first.leaders(player='current')
+
+        self.assertEqual('r2:prime', raw[0]['game'])
+        self.assertEqual('prime', public[0]['game'])
+
     def test_missing_run_is_consistent_across_instances(self):
         with self.assertRaises(UnknownRunError):
             self.first.quit('missing')
@@ -201,9 +289,18 @@ class RunSnapshotTest(unittest.TestCase):
 
     def test_snapshot_is_json_safe_and_restores_private_state(self):
         store = RunStore(random_factory=lambda: random.Random(8))
-        run = store.create('verbal-memory', 'Ada')
+        run = store.create(
+            'verbal-memory',
+            'Ada',
+            ranked=False,
+            timing_mode='relaxed',
+        )
         state = store._runs[run['run_id']]
+        state.level = 4
+        state.level_progress = 2
+        state.truth_bags = {'prime:4': [True, False]}
         snapshot = serialize_run_state(state)
+        expected_next_random = state.rng.random()
 
         encoded = json.dumps(snapshot)
         restored = deserialize_run_state(
@@ -213,8 +310,35 @@ class RunSnapshotTest(unittest.TestCase):
 
         self.assertEqual(state.run_id, restored.run_id)
         self.assertEqual(state.round, restored.round)
+        self.assertEqual(state.ranked, restored.ranked)
+        self.assertEqual(state.timing_mode, restored.timing_mode)
+        self.assertEqual(state.level, restored.level)
+        self.assertEqual(state.level_progress, restored.level_progress)
         self.assertEqual(state.seen_words, restored.seen_words)
+        self.assertEqual(state.word_history, restored.word_history)
         self.assertEqual(state.game_bag, restored.game_bag)
+        self.assertEqual(state.truth_bags, restored.truth_bags)
+        self.assertEqual(expected_next_random, restored.rng.random())
+
+    def test_snapshot_version_and_progress_are_strictly_validated(self):
+        store = RunStore(random_factory=lambda: random.Random(8))
+        run = store.create('even', 'Ada')
+        snapshot = serialize_run_state(store._runs[run['run_id']])
+        self.assertEqual(RUN_STATE_VERSION, snapshot['version'])
+
+        for field, invalid in (
+                ('version', RUN_STATE_VERSION - 1),
+                ('level', 6),
+                ('level_progress', 3),
+                ('ranked', 'yes'),
+                ('timing_mode', 'turbo'),
+                ('truth_bags', {'even:1': [1]}),
+        ):
+            with self.subTest(field=field):
+                malformed = dict(snapshot)
+                malformed[field] = invalid
+                with self.assertRaises(ValueError):
+                    deserialize_run_state(malformed, random.Random(9))
 
     def test_postgres_query_locks_the_run_row(self):
         statement = PostgresRunStore.locked_state_statement(

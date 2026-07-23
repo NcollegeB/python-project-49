@@ -1,13 +1,28 @@
+from collections import Counter
+from math import ceil
+from math import gcd
 import random
 import threading
 import unittest
 
+from brain_games.difficulty import CORRECT_PER_LEVEL
+from brain_games.difficulty import DIRECTION_DIFFERENCES_DEG
+from brain_games.difficulty import DIRECTION_ITEM_COUNTS
+from brain_games.difficulty import MAX_LEVEL
+from brain_games.difficulty import SYMBOL_SEQUENCE_LENGTHS
+from brain_games.difficulty import time_limit_ms
+from brain_games.difficulty import VERBAL_HISTORY_WINDOWS
+from brain_games.difficulty import VERBAL_REPEAT_LAGS
+from brain_games.difficulty import VERBAL_SEEN_PERCENTAGES
 from brain_games.games.catalog import CORE_GAMES
+import brain_games.web_engine as web_engine
 from brain_games.web_engine import GAME_CATALOG
 from brain_games.web_engine import InvalidAnswerError
 from brain_games.web_engine import RunEndedError
 from brain_games.web_engine import RunStore
+from brain_games.web_engine import SCORE_GAME_PREFIX
 from brain_games.web_engine import StaleRoundError
+from brain_games.web_engine import TIMEOUT_ANSWER
 from brain_games.web_engine import UnknownGameError
 from brain_games.web_engine import UnknownRunError
 from brain_games.web_engine import game_catalog
@@ -22,10 +37,21 @@ class MemoryLeaderboard:
         self.records.append(entry)
         return entry
 
-    def top(self, limit=10, game=None, player=None):
+    def top(
+            self,
+            limit=10,
+            game=None,
+            player=None,
+            game_prefix=None,
+    ):
         entries = self.records
         if game is not None:
             entries = [entry for entry in entries if entry['game'] == game]
+        if game_prefix is not None:
+            entries = [
+                entry for entry in entries
+                if entry['game'].startswith(game_prefix)
+            ]
         if player is not None:
             entries = [
                 entry for entry in entries
@@ -75,6 +101,11 @@ def assert_no_private_answer(test_case, value):
     elif isinstance(value, (list, tuple)):
         for child in value:
             assert_no_private_answer(test_case, child)
+
+
+def evaluate_expression(expression):
+    python_expression = expression.replace('×', '*').replace('÷', '//')
+    return eval(python_expression, {'__builtins__': {}}, {})
 
 
 class CatalogTest(unittest.TestCase):
@@ -132,6 +163,12 @@ class RunStoreTest(unittest.TestCase):
         self.assertEqual(0, run['score'])
         self.assertEqual(3, run['lives'])
         self.assertEqual(3, run['max_lives'])
+        self.assertEqual(1, run['level'])
+        self.assertEqual(0, run['level_progress'])
+        self.assertEqual(3, run['level_goal'])
+        self.assertEqual(5, run['max_level'])
+        self.assertTrue(run['ranked'])
+        self.assertEqual('standard', run['timing_mode'])
         self.assertFalse(run['ended'])
         self.assertFalse(run['quit_early'])
         self.assertEqual(32, len(run['run_id']))
@@ -147,6 +184,9 @@ class RunStoreTest(unittest.TestCase):
                 'data',
                 'choices',
                 'preview_ms',
+                'level',
+                'difficulty_label',
+                'time_limit_ms',
                 'hidden_prompt',
                 'cycle_position',
                 'cycle_total',
@@ -155,7 +195,10 @@ class RunStoreTest(unittest.TestCase):
         )
         self.assertEqual('even', game_round['source_slug'])
         self.assertEqual('choice', game_round['kind'])
-        self.assertEqual({'number': 17}, game_round['data'])
+        self.assertIn('number', game_round['data'])
+        self.assertEqual(1, game_round['level'])
+        self.assertEqual('Foundation', game_round['difficulty_label'])
+        self.assertEqual(4000, game_round['time_limit_ms'])
         self.assertEqual(['yes', 'no'], game_round['choices'])
         self.assertIsNone(game_round['cycle_position'])
         assert_no_private_answer(self, run)
@@ -172,6 +215,9 @@ class RunStoreTest(unittest.TestCase):
             'data',
             'choices',
             'preview_ms',
+            'level',
+            'difficulty_label',
+            'time_limit_ms',
             'hidden_prompt',
             'cycle_position',
             'cycle_total',
@@ -192,15 +238,21 @@ class RunStoreTest(unittest.TestCase):
         result = self.store.answer(
             run['run_id'],
             old_round['round_id'],
-            ' N ',
+            expected_answer(self.store, run['run_id']),
         )
 
         self.assertEqual(1, result['score'])
         self.assertEqual(3, result['lives'])
         self.assertTrue(result['result']['correct'])
-        self.assertEqual('N', result['result']['submitted_answer'])
-        self.assertEqual('no', result['result']['expected_answer'])
+        self.assertEqual(
+            result['result']['submitted_answer'],
+            result['result']['expected_answer'],
+        )
         self.assertEqual('even', result['result']['source_slug'])
+        self.assertFalse(result['result']['timed_out'])
+        self.assertEqual(1, result['result']['level_before'])
+        self.assertEqual(1, result['result']['level_after'])
+        self.assertFalse(result['result']['leveled_up'])
         self.assertNotEqual(
             old_round['round_id'],
             result['round']['round_id'],
@@ -215,9 +267,14 @@ class RunStoreTest(unittest.TestCase):
             self.store.answer(run['run_id'], round_id, 'sometimes')
         self.assertEqual(['yes', 'no'], invalid.exception.choices)
 
-        answered = self.store.answer(run['run_id'], round_id, 'no')
+        correct_answer = expected_answer(self.store, run['run_id'])
+        answered = self.store.answer(
+            run['run_id'],
+            round_id,
+            correct_answer,
+        )
         with self.assertRaises(StaleRoundError) as stale:
-            self.store.answer(run['run_id'], round_id, 'no')
+            self.store.answer(run['run_id'], round_id, correct_answer)
 
         self.assertEqual(run['run_id'], stale.exception.run_id)
         self.assertEqual(round_id, stale.exception.round_id)
@@ -242,7 +299,11 @@ class RunStoreTest(unittest.TestCase):
         self.assertEqual(0, latest['lives'])
         self.assertIsNone(latest['round'])
         self.assertEqual(
-            [{'player': 'Grace', 'game': 'calc', 'score': 0}],
+            [{
+                'player': 'Grace',
+                'game': '{}calc'.format(SCORE_GAME_PREFIX),
+                'score': 0,
+            }],
             self.board.records,
         )
         with self.assertRaises(RunEndedError):
@@ -262,9 +323,20 @@ class RunStoreTest(unittest.TestCase):
         self.assertIsNone(first['round'])
         self.assertEqual(first, second)
         self.assertEqual(1, len(self.board.records))
-        self.assertEqual(self.board.records, self.store.leaders('PRIME'))
         self.assertEqual(
-            self.board.records,
+            [{
+                'player': 'Lin',
+                'game': 'prime',
+                'score': 0,
+            }],
+            self.store.leaders('PRIME'),
+        )
+        self.assertEqual(
+            [{
+                'player': 'Lin',
+                'game': 'prime',
+                'score': 0,
+            }],
             self.store.leaders(player='lin'),
         )
         self.assertEqual([], self.store.leaders('even'))
@@ -321,8 +393,8 @@ class RunStoreTest(unittest.TestCase):
             number_one['round']['prompt'],
         )
 
-        self.assertEqual(2, number_one_next['round']['data']['digits'])
-        self.assertEqual(1, number_two['round']['data']['digits'])
+        self.assertEqual(3, number_one_next['round']['data']['digits'])
+        self.assertEqual(2, number_two['round']['data']['digits'])
 
         verbal_one = self.store.create('verbal-memory', 'One')
         verbal_two = self.store.create('verbal-memory', 'Two')
@@ -332,8 +404,9 @@ class RunStoreTest(unittest.TestCase):
             'no',
         )
 
-        self.assertEqual('acorn', verbal_one['round']['data']['word'])
-        self.assertEqual('acorn', verbal_two['round']['data']['word'])
+        first_term = RunStore._verbal_term_for_index(0)
+        self.assertEqual(first_term, verbal_one['round']['data']['word'])
+        self.assertEqual(first_term, verbal_two['round']['data']['word'])
         self.assertNotEqual(
             verbal_one['round']['round_id'],
             verbal_two['round']['round_id'],
@@ -356,6 +429,7 @@ class RunStoreTest(unittest.TestCase):
 
     def test_concurrent_duplicate_answers_only_grade_once(self):
         run = self.store.create('even', 'Ada')
+        answer = expected_answer(self.store, run['run_id'])
         barrier = threading.Barrier(3)
         outcomes = []
 
@@ -365,7 +439,7 @@ class RunStoreTest(unittest.TestCase):
                 outcome = self.store.answer(
                     run['run_id'],
                     run['round']['round_id'],
-                    'no',
+                    answer,
                 )
             except Exception as error:
                 outcomes.append(error)
@@ -387,7 +461,699 @@ class RunStoreTest(unittest.TestCase):
         self.assertIsInstance(failures[0], StaleRoundError)
 
 
+class LevelProgressionTest(unittest.TestCase):
+
+    def setUp(self):
+        self.board = MemoryLeaderboard()
+        self.store = RunStore(
+            leaderboard=self.board,
+            random_factory=lambda: random.Random(13),
+        )
+
+    def _answer_correctly(self, run):
+        return self.store.answer(
+            run['run_id'],
+            run['round']['round_id'],
+            expected_answer(self.store, run['run_id']),
+        )
+
+    def test_three_correct_answers_advance_and_a_timeout_keeps_progress(self):
+        run = self.store.create('even', 'Ada')
+        run = self._answer_correctly(run)
+        run = self._answer_correctly(run)
+
+        self.assertEqual(1, run['level'])
+        self.assertEqual(2, run['level_progress'])
+
+        timed_out = self.store.answer(
+            run['run_id'],
+            run['round']['round_id'],
+            TIMEOUT_ANSWER,
+        )
+
+        self.assertEqual(2, timed_out['lives'])
+        self.assertEqual(1, timed_out['level'])
+        self.assertEqual(2, timed_out['level_progress'])
+        self.assertTrue(timed_out['result']['timed_out'])
+        self.assertFalse(timed_out['result']['correct'])
+        self.assertEqual(1, timed_out['result']['level_before'])
+        self.assertEqual(1, timed_out['result']['level_after'])
+        self.assertFalse(timed_out['result']['leveled_up'])
+
+        advanced = self._answer_correctly(timed_out)
+        self.assertEqual(2, advanced['level'])
+        self.assertEqual(0, advanced['level_progress'])
+        self.assertEqual(2, advanced['round']['level'])
+        self.assertEqual(1, advanced['result']['level_before'])
+        self.assertEqual(2, advanced['result']['level_after'])
+        self.assertTrue(advanced['result']['leveled_up'])
+
+    def test_level_five_repeats_without_exceeding_the_cap(self):
+        run = self.store.create('calc', 'Ada')
+        state = self.store._runs[run['run_id']]
+        state.level = MAX_LEVEL
+        state.level_progress = CORRECT_PER_LEVEL - 1
+        state.round = self.store._make_round(state)
+        run = self.store._public_run(state)
+
+        result = self._answer_correctly(run)
+
+        self.assertEqual(MAX_LEVEL, result['level'])
+        self.assertEqual(0, result['level_progress'])
+        self.assertFalse(result['result']['leveled_up'])
+        self.assertEqual(MAX_LEVEL, result['result']['level_before'])
+        self.assertEqual(MAX_LEVEL, result['result']['level_after'])
+
+    def test_unranked_runs_never_write_and_ruleset_scores_are_isolated(self):
+        unranked = self.store.create('calc', 'Practice', ranked=False)
+        self.assertFalse(unranked['ranked'])
+        for _miss in range(3):
+            unranked = self.store.answer(
+                unranked['run_id'],
+                unranked['round']['round_id'],
+                TIMEOUT_ANSWER,
+            )
+        self.assertEqual([], self.board.records)
+
+        self.board.record('Legacy', 'even', 999)
+        ranked = self.store.create('even', 'Current')
+        self.store.quit(ranked['run_id'])
+
+        self.assertEqual(
+            [{'player': 'Current', 'game': 'even', 'score': 0}],
+            self.store.leaders(),
+        )
+        self.assertTrue(self.board.records[-1]['game'].startswith(
+            SCORE_GAME_PREFIX,
+        ))
+
+    def test_ranked_argument_must_be_boolean(self):
+        with self.assertRaises(TypeError):
+            self.store.create('even', 'Ada', ranked='yes')
+
+    def test_timing_modes_scale_only_the_answer_window(self):
+        standard = self.store.create(
+            'calc',
+            'Standard',
+            timing_mode='standard',
+        )
+        relaxed = self.store.create(
+            'calc',
+            'Relaxed',
+            timing_mode=' RELAXED ',
+        )
+        self_paced = self.store.create(
+            'calc',
+            'Self paced',
+            timing_mode='self-paced',
+        )
+
+        self.assertEqual(8000, standard['round']['time_limit_ms'])
+        self.assertEqual(16000, relaxed['round']['time_limit_ms'])
+        self.assertEqual(0, self_paced['round']['time_limit_ms'])
+        self.assertEqual('relaxed', relaxed['timing_mode'])
+        self.assertEqual('self-paced', self_paced['timing_mode'])
+        self.assertFalse(relaxed['ranked'])
+        self.assertFalse(self_paced['ranked'])
+
+        memory = self.store.create(
+            'number-memory',
+            'Memory',
+            timing_mode='self-paced',
+        )
+        self.assertEqual(0, memory['round']['time_limit_ms'])
+        self.assertEqual(1800, memory['round']['preview_ms'])
+
+    def test_timing_mode_must_be_supported(self):
+        with self.assertRaises(TypeError):
+            self.store.create('even', 'Ada', timing_mode=None)
+        with self.assertRaises(ValueError):
+            self.store.create('even', 'Ada', timing_mode='turbo')
+
+
+class DifficultyGeneratorTest(unittest.TestCase):
+
+    def setUp(self):
+        self.store = RunStore(
+            leaderboard=MemoryLeaderboard(),
+            random_factory=lambda: random.Random(29),
+        )
+
+    def _rounds(self, slug, level, count=12, progress=0):
+        run = self.store.create(slug, 'Player')
+        state = self.store._runs[run['run_id']]
+        state.level = level
+        state.level_progress = progress
+        state.truth_bags = {}
+        state.seen_words = set()
+        state.word_history = []
+        state.new_word_index = 0
+        rounds = []
+        for _index in range(count):
+            state.round = self.store._make_round(state)
+            rounds.append(state.round)
+        return rounds
+
+    def test_every_source_exposes_level_label_and_configured_timer(self):
+        for game in CORE_GAMES:
+            for level in range(1, MAX_LEVEL + 1):
+                with self.subTest(game=game.SLUG, level=level):
+                    game_round = self._rounds(
+                        game.SLUG,
+                        level,
+                        count=1,
+                    )[0]['public']
+                    self.assertEqual(level, game_round['level'])
+                    self.assertTrue(game_round['difficulty_label'])
+                    self.assertEqual(
+                        time_limit_ms(game.SLUG, level),
+                        game_round['time_limit_ms'],
+                    )
+
+    def test_even_timer_grows_with_content_complexity(self):
+        self.assertEqual(
+            (4000, 5000, 7000, 9000, 12000),
+            tuple(
+                time_limit_ms('even', level)
+                for level in range(1, MAX_LEVEL + 1)
+            ),
+        )
+
+    def test_even_levels_have_correct_parity_and_balanced_answers(self):
+        for level in range(1, MAX_LEVEL + 1):
+            rounds = self._rounds('even', level, count=10)
+            answers = []
+            for game_round in rounds:
+                expression = game_round['public']['data'].get(
+                    'expression',
+                    game_round['public']['data'].get('number'),
+                )
+                value = evaluate_expression(str(expression))
+                expected = 'yes' if value % 2 == 0 else 'no'
+                self.assertEqual(expected, game_round['expected_answer'])
+                answers.append(game_round['expected_answer'])
+            self.assertEqual({'yes': 5, 'no': 5}, Counter(answers))
+
+    def test_calculator_levels_always_generate_exact_nonnegative_answers(self):
+        for level in range(1, MAX_LEVEL + 1):
+            for game_round in self._rounds('calc', level, count=30):
+                expression = game_round['public']['data']['expression']
+                calculated = evaluate_expression(expression)
+                self.assertEqual(
+                    calculated,
+                    int(game_round['expected_answer']),
+                )
+                self.assertGreaterEqual(calculated, 0)
+
+    def test_gcd_levels_construct_bounded_pairs_with_exact_answers(self):
+        maximums = (96, 90, 400, 1500, 5000)
+        for level, maximum in enumerate(maximums, start=1):
+            for game_round in self._rounds('gcd', level, count=30):
+                numbers = game_round['public']['data']['numbers']
+                self.assertLessEqual(max(numbers), maximum)
+                self.assertEqual(
+                    gcd(*numbers),
+                    int(game_round['expected_answer']),
+                )
+
+    def test_progression_levels_use_the_declared_pattern_families(self):
+        validators = {
+            1: self._assert_arithmetic,
+            2: self._assert_arithmetic,
+            3: self._assert_geometric,
+            4: self._assert_interleaved,
+            5: self._assert_second_difference,
+        }
+        patterns = {
+            1: 'arithmetic',
+            2: 'arithmetic',
+            3: 'geometric',
+            4: 'interleaved_arithmetic',
+            5: 'constant_second_difference',
+        }
+        for level in range(1, MAX_LEVEL + 1):
+            for game_round in self._rounds(
+                    'progression',
+                    level,
+                    count=20):
+                data = game_round['public']['data']
+                values = list(data['sequence'])
+                values[data['hidden_index']] = game_round[
+                    'expected_answer'
+                ]
+                values = [int(value) for value in values]
+                self.assertEqual(patterns[level], data['pattern'])
+                self.assertTrue(data['pattern_label'])
+                validators[level](values)
+
+    def _assert_arithmetic(self, values):
+        differences = [
+            right - left
+            for left, right in zip(values, values[1:])
+        ]
+        self.assertEqual(1, len(set(differences)))
+
+    def _assert_geometric(self, values):
+        ratios = [
+            right // left
+            for left, right in zip(values, values[1:])
+        ]
+        self.assertEqual(1, len(set(ratios)))
+
+    def _assert_interleaved(self, values):
+        self._assert_arithmetic(values[::2])
+        self._assert_arithmetic(values[1::2])
+
+    def _assert_second_difference(self, values):
+        differences = [
+            right - left
+            for left, right in zip(values, values[1:])
+        ]
+        self._assert_arithmetic(differences)
+
+    def test_prime_levels_are_balanced_and_respect_factor_floors(self):
+        specs = web_engine._PRIME_LEVEL_SPECS
+        for level, (lower, upper, minimum_factor) in specs.items():
+            rounds = self._rounds('prime', level, count=20)
+            answers = []
+            for game_round in rounds:
+                number = game_round['public']['data']['number']
+                answer = game_round['expected_answer']
+                self.assertGreaterEqual(number, lower)
+                self.assertLessEqual(number, upper)
+                self.assertEqual(
+                    web_engine._is_prime(number),
+                    answer == 'yes',
+                )
+                if answer == 'no':
+                    self.assertGreaterEqual(
+                        web_engine._smallest_prime_factor(number),
+                        minimum_factor,
+                    )
+                answers.append(answer)
+            self.assertEqual({'yes': 10, 'no': 10}, Counter(answers))
+
+    def test_number_memory_uses_level_progress_digit_bands(self):
+        bands = {
+            1: (2, 3, 4),
+            2: (5, 5, 6),
+            3: (7, 7, 8),
+            4: (9, 9, 10),
+            5: (11, 12, 13),
+        }
+        for level, digits_by_progress in bands.items():
+            for progress, digits in enumerate(digits_by_progress):
+                game_round = self._rounds(
+                    'number-memory',
+                    level,
+                    count=1,
+                    progress=progress,
+                )[0]
+                public = game_round['public']
+                self.assertEqual(digits, public['data']['digits'])
+                self.assertEqual(digits, len(public['prompt']))
+                self.assertEqual(
+                    max(1800, digits * 500),
+                    public['preview_ms'],
+                )
+                self.assertEqual(0, public['time_limit_ms'])
+
+    def test_verbal_levels_apply_windows_lags_and_safe_words(self):
+        for level in range(1, MAX_LEVEL + 1):
+            rounds = self._rounds(
+                'verbal-memory',
+                level,
+                count=30,
+            )
+            history = []
+            seen_answers = 0
+            for game_round in rounds:
+                public = game_round['public']
+                data = public['data']
+                word = data['word']
+                self.assertNotIn('-', word)
+                self.assertEqual(
+                    VERBAL_REPEAT_LAGS[level - 1],
+                    data['minimum_repeat_lag'],
+                )
+                self.assertEqual(
+                    VERBAL_SEEN_PERCENTAGES[level - 1],
+                    data['seen_probability_percent'],
+                )
+                if game_round['expected_answer'] == 'yes':
+                    eligible = RunStore._eligible_repeat_words(
+                        history,
+                        VERBAL_HISTORY_WINDOWS[level - 1],
+                        VERBAL_REPEAT_LAGS[level - 1],
+                    )
+                    self.assertIn(word, eligible)
+                    seen_answers += 1
+                else:
+                    self.assertNotIn(word, history)
+                history.append(word)
+            self.assertGreater(seen_answers, 0)
+
+    def test_verbal_repeat_lag_uses_the_most_recent_occurrence(self):
+        history = ['acorn', 'beacon', 'acorn']
+
+        eligible = RunStore._eligible_repeat_words(
+            history,
+            history_window=None,
+            minimum_lag=2,
+        )
+
+        self.assertNotIn('acorn', eligible)
+        self.assertIn('beacon', eligible)
+
+    def test_verbal_new_terms_remain_unique_beyond_the_base_word_list(self):
+        terms = [
+            RunStore._verbal_term_for_index(index)
+            for index in range(5000)
+        ]
+
+        self.assertEqual(len(terms), len(set(terms)))
+        self.assertTrue(all(' ' in term for term in terms))
+        self.assertTrue(all('-' not in term for term in terms))
+
+    def test_verbal_levels_balance_seen_prompts_in_twenty_round_blocks(self):
+        expected_seen_counts = (7, 9, 10, 10, 10)
+        seed_words = list(web_engine.brain_verbal_memory.WORDS[:20])
+        for level, expected_seen in enumerate(
+                expected_seen_counts,
+                start=1):
+            run = self.store.create('verbal-memory', 'Player')
+            state = self.store._runs[run['run_id']]
+            state.level = level
+            state.word_history = list(seed_words)
+            state.seen_words = set(seed_words)
+            state.new_word_index = len(seed_words)
+            state.truth_bags = {}
+
+            answers = []
+            for _index in range(20):
+                state.round = self.store._make_round(state)
+                answers.append(state.round['expected_answer'])
+                self.assertEqual(
+                    0,
+                    state.round['public']['time_limit_ms'],
+                )
+
+            self.assertEqual(expected_seen, answers.count('yes'))
+            self.assertEqual(20 - expected_seen, answers.count('no'))
+
+    def test_culmination_verbal_lag_warms_up_with_source_history(self):
+        run = self.store.create('culmination', 'Player')
+        state = self.store._runs[run['run_id']]
+        state.level = 5
+        state.word_history = []
+        state.seen_words = set()
+        state.new_word_index = 0
+        state.truth_bags = {}
+        answers = []
+        effective_lags = []
+
+        for _index in range(20):
+            game_round = self.store._generate_verbal_memory(state)
+            answers.append(game_round['expected_answer'])
+            effective_lags.append(
+                game_round['data']['minimum_repeat_lag'],
+            )
+            self.assertEqual(
+                12,
+                game_round['data']['configured_repeat_lag'],
+            )
+
+        self.assertEqual('no', answers[0])
+        self.assertIn('yes', answers[1:12])
+        self.assertGreaterEqual(answers.count('yes'), 8)
+        self.assertEqual(sorted(effective_lags), effective_lags)
+        self.assertLess(effective_lags[0], effective_lags[-1])
+
+    def test_direction_levels_scale_and_balance_orientations(self):
+        expected_orientation_counts = (1, 1, 2, 2, 3)
+        for level in range(1, MAX_LEVEL + 1):
+            for game_round in self._rounds(
+                    'direction-focus',
+                    level,
+                    count=12):
+                data = game_round['public']['data']
+                target_angle = web_engine._DIRECTION_ANGLES[
+                    game_round['expected_answer']
+                ]
+                rotations = data['rotations']
+                self.assertEqual(
+                    DIRECTION_ITEM_COUNTS[level - 1],
+                    len(rotations),
+                )
+                self.assertEqual(1, rotations.count(target_angle))
+                distractor_counts = Counter(
+                    rotation
+                    for rotation in rotations
+                    if rotation != target_angle
+                )
+                self.assertEqual(
+                    expected_orientation_counts[level - 1],
+                    len(distractor_counts),
+                )
+                maximum_count = max(distractor_counts.values())
+                minimum_count = min(distractor_counts.values())
+                orientation_spread = maximum_count - minimum_count
+                self.assertLessEqual(
+                    orientation_spread,
+                    1,
+                )
+                self.assertGreaterEqual(
+                    min(distractor_counts.values()),
+                    2,
+                )
+                differences = [
+                    min(
+                        (rotation - target_angle) % 360,
+                        (target_angle - rotation) % 360,
+                    )
+                    for rotation in rotations
+                    if rotation != target_angle
+                ]
+                self.assertEqual(
+                    DIRECTION_DIFFERENCES_DEG[level - 1],
+                    min(differences),
+                )
+                if level < 5:
+                    self.assertEqual(
+                        {DIRECTION_DIFFERENCES_DEG[level - 1]},
+                        set(differences),
+                    )
+                else:
+                    self.assertEqual({20, 40}, set(differences))
+                self.assertEqual(
+                    expected_orientation_counts[level - 1],
+                    data['distractor_orientation_count'],
+                )
+                self.assertEqual(
+                    len(rotations),
+                    len(data['accessible_sequence']),
+                )
+                self.assertTrue(all(
+                    item['accessible_label']
+                    for item in data['items']
+                ))
+                if DIRECTION_DIFFERENCES_DEG[level - 1] % 45:
+                    self.assertEqual(
+                        (
+                            'Find the one arrow pointing in a '
+                            'different direction.'
+                        ),
+                        game_round['public']['prompt'],
+                    )
+
+    def test_symbol_levels_have_one_authored_accessible_mismatch(self):
+        for level in range(1, MAX_LEVEL + 1):
+            rounds = self._rounds('symbol-match', level, count=10)
+            answers = []
+            for game_round in rounds:
+                data = game_round['public']['data']
+                left = data['left_symbols']
+                right = data['right_symbols']
+                mismatch_count = sum(
+                    first != second
+                    for first, second in zip(left, right)
+                )
+                self.assertEqual(
+                    SYMBOL_SEQUENCE_LENGTHS[level - 1],
+                    len(left),
+                )
+                expected_mismatches = (
+                    0 if game_round['expected_answer'] == 'yes' else 1
+                )
+                self.assertEqual(expected_mismatches, mismatch_count)
+                self.assertEqual(
+                    left,
+                    [
+                        token['symbol']
+                        for token in data['left_tokens']
+                    ],
+                )
+                self.assertEqual(
+                    right,
+                    [
+                        token['symbol']
+                        for token in data['right_tokens']
+                    ],
+                )
+                self.assertTrue(all(
+                    token['accessible_label']
+                    for token in (
+                        data['left_tokens'] + data['right_tokens']
+                    )
+                ))
+                mismatch_indices = [
+                    index
+                    for index, (left_symbol, right_symbol) in enumerate(
+                        zip(left, right),
+                    )
+                    if left_symbol != right_symbol
+                ]
+                self.assertNotIn('mismatch_index', data)
+                self.assertNotIn('mismatch_kind', data)
+                if mismatch_indices:
+                    mismatch_index = mismatch_indices[0]
+                    left_token = data['left_tokens'][mismatch_index]
+                    right_token = data['right_tokens'][mismatch_index]
+                    self._assert_symbol_feature_change(
+                        level,
+                        left_token,
+                        right_token,
+                    )
+                answers.append(game_round['expected_answer'])
+            self.assertEqual({'yes': 5, 'no': 5}, Counter(answers))
+
+    def _assert_symbol_feature_change(self, level, left, right):
+        if level == 1:
+            self.assertNotEqual(left['shape'], right['shape'])
+            self.assertNotEqual(left['fill'], right['fill'])
+        elif level == 2:
+            self.assertNotEqual(left['shape'], right['shape'])
+            self.assertEqual(left['fill'], right['fill'])
+        elif level == 3:
+            self.assertEqual(left['shape'], right['shape'])
+            self.assertNotEqual(left['fill'], right['fill'])
+        elif level == 4:
+            self.assertEqual(left['shape'], right['shape'])
+            self.assertEqual(left['fill'], right['fill'])
+            angular_difference = abs(
+                left['rotation_deg'] - right['rotation_deg'],
+            )
+            self.assertEqual(
+                90,
+                min(angular_difference, 360 - angular_difference),
+            )
+        else:
+            self.assertEqual(left['shape'], right['shape'])
+            self.assertEqual(left['fill'], right['fill'])
+            self.assertNotEqual(
+                left['internal_mark'],
+                right['internal_mark'],
+            )
+
+    def test_scramble_pool_excludes_ambiguous_and_invalid_candidates(self):
+        all_words = [
+            word
+            for words in web_engine._SCRAMBLE_WORDS_BY_LEVEL.values()
+            for word in words
+        ]
+        signatures = [''.join(sorted(word)) for word in all_words]
+        self.assertEqual(len(signatures), len(set(signatures)))
+        removed_words = {
+            'ocean', 'canoe', 'garden', 'danger',
+            'silver', 'sliver', 'livers', 'ginger',
+        }
+        self.assertTrue(removed_words.isdisjoint(all_words))
+
+        for (level, word), candidates in (
+                web_engine._SCRAMBLE_DERANGEMENTS.items()):
+            self.assertTrue(candidates)
+            for candidate in candidates:
+                self.assertTrue(
+                    web_engine._scramble_candidate_is_valid(
+                        level,
+                        word,
+                        candidate,
+                    ),
+                )
+
+    def test_scramble_rounds_expose_controlled_shuffle_metrics(self):
+        length_ranges = {
+            1: (4, 5),
+            2: (6, 6),
+            3: (7, 7),
+            4: (8, 8),
+            5: (9, 10),
+        }
+        minimum_moved_ratios = {
+            1: 0.60,
+            2: 0.70,
+            3: 0.80,
+            4: 1.00,
+            5: 1.00,
+        }
+        for level, (minimum, maximum) in length_ranges.items():
+            for game_round in self._rounds(
+                    'word-scramble',
+                    level,
+                    count=24):
+                public = game_round['public']
+                word = game_round['expected_answer']
+                scrambled = public['data']['scrambled']
+                self.assertGreaterEqual(len(word), minimum)
+                self.assertLessEqual(len(word), maximum)
+                self.assertEqual(Counter(word), Counter(scrambled))
+                moved_positions, preserved_bigrams = (
+                    web_engine._scramble_metrics(word, scrambled)
+                )
+                self.assertEqual(
+                    moved_positions,
+                    public['data']['moved_positions'],
+                )
+                self.assertEqual(
+                    preserved_bigrams,
+                    public['data']['preserved_bigrams'],
+                )
+                self.assertGreaterEqual(
+                    moved_positions,
+                    ceil(len(word) * minimum_moved_ratios[level]),
+                )
+                if level in (1, 2):
+                    self.assertEqual(1, preserved_bigrams)
+                elif level == 3:
+                    self.assertLessEqual(preserved_bigrams, 1)
+                else:
+                    self.assertEqual(len(word), moved_positions)
+                    self.assertEqual(0, preserved_bigrams)
+                self.assertEqual(
+                    level == 1,
+                    public['data']['hint'] is not None,
+                )
+
+
 class CulminationRunTest(unittest.TestCase):
+
+    def test_round_uses_global_level_and_its_source_timer(self):
+        store = RunStore(
+            leaderboard=MemoryLeaderboard(),
+            random_factory=lambda: NoShuffleRandom(5),
+        )
+        run = store.create('culmination', 'Ada')
+        state = store._runs[run['run_id']]
+        state.level = 4
+        state.level_progress = 1
+        state.round = store._make_round(state)
+        public = state.round['public']
+
+        self.assertEqual(4, public['level'])
+        self.assertEqual(
+            time_limit_ms(public['source_slug'], 4),
+            public['time_limit_ms'],
+        )
 
     def test_cycle_contains_every_core_game_before_repeating(self):
         store = RunStore(

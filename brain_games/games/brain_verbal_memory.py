@@ -6,7 +6,7 @@ import random
 NAME = 'Verbal Memory'
 SLUG = 'verbal-memory'
 CATEGORY = 'Memory'
-RULES = 'Answer yes/y if the word appeared earlier, otherwise no/n.'
+RULES = 'Answer yes/y if the term appeared earlier, otherwise no/n.'
 ANSWER_ALIASES = {
     'y': 'yes',
     'n': 'no',

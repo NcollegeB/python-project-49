@@ -3,8 +3,6 @@ import json
 import unittest
 from pathlib import Path
 
-from brain_games.app import app as brainhacker_app
-
 
 PROJECT_ROOT = Path(__file__).parents[1]
 ASSET_NAMES = (
@@ -18,9 +16,10 @@ ASSET_NAMES = (
 
 class VercelPackagingTest(unittest.TestCase):
     def test_root_entrypoint_exports_the_brainhacker_app(self):
-        entrypoint = importlib.import_module('app')
+        brainhacker_module = importlib.import_module('brain_games.app')
+        entrypoint = importlib.reload(importlib.import_module('app'))
 
-        self.assertIs(brainhacker_app, entrypoint.app)
+        self.assertIs(brainhacker_module.app, entrypoint.app)
 
     def test_public_assets_match_the_local_flask_assets(self):
         local_directory = PROJECT_ROOT / 'brain_games' / 'static'

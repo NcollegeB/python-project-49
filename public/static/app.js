@@ -4,6 +4,15 @@ import {ArcadeAudio} from './audio.js';
 const PLAYER_STORAGE_KEY = 'brainhacker-player-name';
 const GUEST_PREFIX = 'Guest#';
 const FEEDBACK_DELAY = 620;
+const STILL_CHECKING_DELAY = 1000;
+const TIMEOUT_ANSWER = '__brainhacker_timeout__';
+const TIMEOUT_RETRY_DELAYS = [500, 1000, 2000, 4000, 5000];
+const SUPPORTED_ARROW_ROTATIONS = new Set([
+    0, 20, 30, 40, 45, 50, 60, 70,
+    90, 110, 120, 130, 135, 140, 150, 160,
+    180, 200, 210, 220, 225, 230, 240, 250,
+    270, 290, 300, 310, 315, 320, 330, 340,
+]);
 
 const iconBySlug = {
     even: '02',
@@ -40,9 +49,40 @@ const state = {
     round: null,
     roundNumber: 0,
     busy: false,
-    previewTimer: null,
-    previewRoundId: null,
+    preview: {
+        timer: null,
+        startFrame: null,
+        roundId: null,
+        totalMs: 0,
+        remainingMs: 0,
+        lastTick: null,
+        paused: false,
+    },
     transitionTimer: null,
+    pendingTimer: null,
+    pendingRoundId: null,
+    pendingControl: null,
+    focusRestoreFrame: null,
+    leaderboardRequestSequence: 0,
+    timeoutRetry: {
+        timer: null,
+        runId: null,
+        roundId: null,
+        startSequence: null,
+        attempts: 0,
+        mode: null,
+    },
+    countdown: {
+        frame: null,
+        startFrame: null,
+        roundId: null,
+        totalMs: 0,
+        remainingMs: 0,
+        lastTick: null,
+        paused: false,
+        lowTimeAnnounced: false,
+        renderedTenths: null,
+    },
     startSequence: 0,
     navigating: false,
     personalBests: new Map(),
@@ -69,11 +109,14 @@ function cacheDom() {
     [
         'homeView', 'gameView', 'gameGrid',
         'leaderboardButton', 'soundToggle', 'backButton',
-        'stageCategory', 'stageTitle',
-        'stageRules', 'scoreValue', 'livesValue', 'roundValue',
+        'stageCategory', 'stageTitle', 'runStatus',
+        'stageRules', 'scoreValue', 'livesValue', 'levelValue',
+        'levelProgress', 'roundValue',
         'cycleTrack', 'briefingState', 'activeState', 'resultState',
         'briefingIcon', 'briefingTitle', 'briefingDescription',
-        'startRunButton', 'roundSource', 'roundPrompt', 'roundVisual',
+        'timingMode', 'startRunButton', 'roundSource', 'difficultyLabel',
+        'roundPrompt', 'roundTimer', 'timerText', 'timerProgress',
+        'timerAnnouncement', 'roundVisual',
         'memoryCurtain', 'answerForm', 'answerInput', 'submitAnswer',
         'choiceControls', 'answerRow', 'feedbackRegion', 'resultScore', 'resultBest',
         'resultAverage', 'resultPercentile', 'resultRank',
@@ -276,6 +319,21 @@ function updateHistory(slug = null, replace = false) {
 }
 
 
+function selectedTimingMode() {
+    const selected = dom.timingMode?.querySelector(
+        'input[name="timing-mode"]:checked',
+    );
+    return selected?.value || 'standard';
+}
+
+
+function setTimingControlsDisabled(disabled) {
+    dom.timingMode?.querySelectorAll('input').forEach((input) => {
+        input.disabled = disabled;
+    });
+}
+
+
 function openBriefing(slug, options = {}) {
     const game = findGame(slug);
     if (!game) {
@@ -283,6 +341,10 @@ function openBriefing(slug, options = {}) {
     }
     clearPreviewTimer();
     clearTransitionTimer();
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    clearCountdown();
+    invalidateLeaderboardRequests();
     state.startSequence += 1;
     state.selected = game;
     state.run = null;
@@ -300,9 +362,19 @@ function openBriefing(slug, options = {}) {
     dom.briefingDescription.textContent = game.description || game.rules;
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
-    updateHud({score: 0, lives: 3});
+    dom.runStatus.textContent = 'Test setup';
+    updateHud({
+        score: 0,
+        lives: 3,
+        max_lives: 3,
+        level: 1,
+        level_progress: 0,
+        level_goal: 3,
+        max_level: 5,
+    });
     dom.roundValue.textContent = 'Ready';
     dom.cycleTrack.replaceChildren();
+    setTimingControlsDisabled(false);
     setFeedback('', 'neutral');
     if (!options.fromHistory) {
         updateHistory(slug, options.replaceHistory);
@@ -312,11 +384,19 @@ function openBriefing(slug, options = {}) {
 
 
 function clearPreviewTimer() {
-    if (state.previewTimer) {
-        window.clearTimeout(state.previewTimer);
-        state.previewTimer = null;
+    if (state.preview.timer !== null) {
+        window.clearTimeout(state.preview.timer);
+        state.preview.timer = null;
     }
-    state.previewRoundId = null;
+    if (state.preview.startFrame !== null) {
+        window.cancelAnimationFrame(state.preview.startFrame);
+        state.preview.startFrame = null;
+    }
+    state.preview.roundId = null;
+    state.preview.totalMs = 0;
+    state.preview.remainingMs = 0;
+    state.preview.lastTick = null;
+    state.preview.paused = false;
 }
 
 
@@ -328,14 +408,280 @@ function clearTransitionTimer() {
 }
 
 
+function clearPendingFeedback() {
+    if (state.pendingTimer) {
+        window.clearTimeout(state.pendingTimer);
+        state.pendingTimer = null;
+    }
+    state.pendingRoundId = null;
+    if (state.pendingControl) {
+        state.pendingControl.removeAttribute('data-submitted');
+        state.pendingControl = null;
+    }
+    dom.answerForm?.setAttribute('aria-busy', 'false');
+}
+
+
+function clearTimeoutRetry() {
+    if (state.timeoutRetry.timer !== null) {
+        window.clearTimeout(state.timeoutRetry.timer);
+    }
+    state.timeoutRetry.timer = null;
+    state.timeoutRetry.runId = null;
+    state.timeoutRetry.roundId = null;
+    state.timeoutRetry.startSequence = null;
+    state.timeoutRetry.attempts = 0;
+    state.timeoutRetry.mode = null;
+}
+
+
 function updateHud(run = state.run) {
     if (!run) {
         return;
     }
     dom.scoreValue.textContent = String(run.score ?? 0);
-    const lives = Math.max(0, Number(run.lives ?? 0));
-    dom.livesValue.textContent = `${'♥'.repeat(lives)}${'♡'.repeat(3 - lives)}`;
-    dom.livesValue.setAttribute('aria-label', `${lives} of 3 lives remaining`);
+    const maxLives = Math.max(1, Number(run.max_lives ?? 3));
+    const lives = Math.max(
+        0,
+        Math.min(maxLives, Number(run.lives ?? maxLives)),
+    );
+    dom.livesValue.textContent = (
+        `${'♥'.repeat(lives)}${'♡'.repeat(maxLives - lives)}`
+    );
+    dom.livesValue.setAttribute(
+        'aria-label',
+        `${lives} of ${maxLives} lives remaining`,
+    );
+
+    const maxLevel = Math.max(1, Number(run.max_level ?? 5));
+    const level = Math.max(
+        1,
+        Math.min(maxLevel, Number(run.level ?? state.round?.level ?? 1)),
+    );
+    const levelGoal = Math.max(1, Number(run.level_goal ?? 3));
+    const levelProgress = Math.max(
+        0,
+        Math.min(levelGoal, Number(run.level_progress ?? 0)),
+    );
+    dom.levelValue.textContent = `${level}/${maxLevel}`;
+    dom.levelValue.setAttribute(
+        'aria-label',
+        `Level ${level} of ${maxLevel}`,
+    );
+    dom.levelProgress.textContent = `${levelProgress}/${levelGoal}`;
+    dom.levelProgress.setAttribute(
+        'aria-label',
+        level >= maxLevel
+            ? `${levelProgress} of ${levelGoal} correct answers at Level ${level}`
+            : `${levelProgress} of ${levelGoal} correct answers toward the next level`,
+    );
+}
+
+
+function cancelCountdownFrames() {
+    if (state.countdown.frame !== null) {
+        window.cancelAnimationFrame(state.countdown.frame);
+        state.countdown.frame = null;
+    }
+    if (state.countdown.startFrame !== null) {
+        window.cancelAnimationFrame(state.countdown.startFrame);
+        state.countdown.startFrame = null;
+    }
+}
+
+
+function clearCountdown() {
+    const snapshot = {
+        roundId: state.countdown.roundId,
+        totalMs: state.countdown.totalMs,
+        remainingMs: state.countdown.remainingMs,
+    };
+    cancelCountdownFrames();
+    state.countdown.roundId = null;
+    state.countdown.totalMs = 0;
+    state.countdown.remainingMs = 0;
+    state.countdown.lastTick = null;
+    state.countdown.paused = false;
+    state.countdown.lowTimeAnnounced = false;
+    state.countdown.renderedTenths = null;
+    if (dom.roundTimer) {
+        dom.roundTimer.hidden = true;
+        dom.roundTimer.removeAttribute('data-low-time');
+    }
+    if (dom.timerAnnouncement) {
+        dom.timerAnnouncement.textContent = '';
+    }
+    return snapshot;
+}
+
+
+function updateCountdownDisplay() {
+    const remainingMs = Math.max(0, state.countdown.remainingMs);
+    const totalMs = Math.max(1, state.countdown.totalMs);
+    const tenths = Math.ceil(remainingMs / 100);
+    if (tenths !== state.countdown.renderedTenths) {
+        const timeText = remainingMs <= 10000
+            ? `${(tenths / 10).toFixed(1)}s`
+            : `${Math.ceil(remainingMs / 1000)}s`;
+        dom.timerText.textContent = timeText;
+        state.countdown.renderedTenths = tenths;
+    }
+    dom.timerProgress.max = totalMs;
+    dom.timerProgress.value = remainingMs;
+    dom.timerProgress.setAttribute(
+        'aria-valuetext',
+        `${Math.ceil(remainingMs / 1000)} seconds remaining`,
+    );
+
+    const lowTimeThreshold = Math.min(
+        5000,
+        Math.max(2000, totalMs * 0.25),
+    );
+    if (
+        !state.countdown.lowTimeAnnounced
+        && remainingMs > 0
+        && remainingMs <= lowTimeThreshold
+    ) {
+        state.countdown.lowTimeAnnounced = true;
+        dom.roundTimer.dataset.lowTime = 'true';
+        dom.timerAnnouncement.textContent = (
+            `${Math.max(1, Math.ceil(remainingMs / 1000))} seconds remaining.`
+        );
+    }
+}
+
+
+function countdownTick(timestamp) {
+    const countdown = state.countdown;
+    if (
+        !countdown.roundId
+        || countdown.roundId !== state.round?.round_id
+    ) {
+        clearCountdown();
+        return;
+    }
+    if (document.visibilityState === 'hidden') {
+        countdown.frame = null;
+        countdown.lastTick = null;
+        countdown.paused = true;
+        return;
+    }
+
+    const elapsed = countdown.lastTick === null
+        ? 0
+        : Math.max(0, timestamp - countdown.lastTick);
+    countdown.lastTick = timestamp;
+    countdown.remainingMs = Math.max(0, countdown.remainingMs - elapsed);
+    updateCountdownDisplay();
+
+    if (countdown.remainingMs <= 0) {
+        countdown.frame = null;
+        countdown.lastTick = null;
+        if (!state.busy && countdown.roundId === state.round?.round_id) {
+            submitAnswer(TIMEOUT_ANSWER, null, {timedOut: true});
+        }
+        return;
+    }
+    countdown.frame = window.requestAnimationFrame(countdownTick);
+}
+
+
+function beginCountdown() {
+    if (
+        !state.countdown.roundId
+        || state.countdown.roundId !== state.round?.round_id
+        || state.busy
+    ) {
+        return;
+    }
+    if (document.visibilityState === 'hidden') {
+        state.countdown.paused = true;
+        return;
+    }
+    state.countdown.paused = false;
+    state.countdown.lastTick = window.performance.now();
+    state.countdown.frame = window.requestAnimationFrame(countdownTick);
+}
+
+
+function scheduleCountdownStart(round, remainingOverride = null) {
+    clearCountdown();
+    const totalMs = Math.max(0, Number(round.time_limit_ms || 0));
+    if (
+        totalMs <= 0
+        || selectedTimingMode() === 'self-paced'
+        || round.round_id !== state.round?.round_id
+    ) {
+        return;
+    }
+    state.countdown.roundId = round.round_id;
+    state.countdown.totalMs = totalMs;
+    state.countdown.remainingMs = Math.max(
+        0,
+        Math.min(totalMs, Number(remainingOverride ?? totalMs)),
+    );
+    state.countdown.lowTimeAnnounced = false;
+    state.countdown.renderedTenths = null;
+    dom.roundTimer.hidden = false;
+    updateCountdownDisplay();
+
+    if (document.visibilityState === 'hidden') {
+        state.countdown.paused = true;
+        return;
+    }
+
+    // Two animation frames guarantee the challenge and focused answer control
+    // have painted before any of the player's response time is consumed.
+    state.countdown.startFrame = window.requestAnimationFrame(() => {
+        state.countdown.startFrame = window.requestAnimationFrame(() => {
+            state.countdown.startFrame = null;
+            beginCountdown();
+        });
+    });
+}
+
+
+function pauseCountdownForVisibility() {
+    const countdown = state.countdown;
+    if (!countdown.roundId) {
+        return;
+    }
+    if (countdown.lastTick !== null) {
+        const elapsed = Math.max(
+            0,
+            window.performance.now() - countdown.lastTick,
+        );
+        countdown.remainingMs = Math.max(
+            0,
+            countdown.remainingMs - elapsed,
+        );
+        updateCountdownDisplay();
+    }
+    cancelCountdownFrames();
+    countdown.lastTick = null;
+    countdown.paused = true;
+}
+
+
+function resumeCountdownFromVisibility() {
+    const countdown = state.countdown;
+    if (
+        !countdown.roundId
+        || !countdown.paused
+        || countdown.roundId !== state.round?.round_id
+        || state.busy
+    ) {
+        return;
+    }
+    countdown.paused = false;
+    if (countdown.remainingMs <= 0) {
+        submitAnswer(TIMEOUT_ANSWER, null, {timedOut: true});
+        return;
+    }
+    countdown.startFrame = window.requestAnimationFrame(() => {
+        countdown.startFrame = null;
+        beginCountdown();
+    });
 }
 
 
@@ -343,12 +689,18 @@ async function startRun() {
     if (!state.selected || state.busy) {
         return;
     }
+    clearPreviewTimer();
     clearTransitionTimer();
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    clearCountdown();
     const selectedSlug = state.selected.slug;
+    const timingMode = selectedTimingMode();
     const requestSequence = state.startSequence + 1;
     state.startSequence = requestSequence;
     state.busy = true;
     dom.startRunButton.disabled = true;
+    setTimingControlsDisabled(true);
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
     audio.unlock();
@@ -359,6 +711,7 @@ async function startRun() {
             body: JSON.stringify({
                 game: state.selected.slug,
                 player: currentPlayerName(),
+                timing_mode: timingMode,
             }),
         });
         const createdRun = unwrapRun(payload);
@@ -378,6 +731,9 @@ async function startRun() {
         }
         state.run = createdRun;
         state.roundNumber = 0;
+        dom.runStatus.textContent = createdRun.ranked === false
+            ? 'Practice run'
+            : 'Ranked test';
         showState('active');
         updateHud();
         renderRound(state.run.round);
@@ -390,6 +746,7 @@ async function startRun() {
         if (requestSequence === state.startSequence) {
             state.busy = false;
             dom.startRunButton.disabled = false;
+            setTimingControlsDisabled(false);
         }
     }
 }
@@ -437,6 +794,10 @@ function renderChoices(choices) {
         button.dataset.value = choice.value;
         button.dataset.shortcut = String(choice.shortcut).toLowerCase();
         if (choice.shortcut) {
+            button.setAttribute(
+                'aria-keyshortcuts',
+                String(choice.shortcut).toUpperCase(),
+            );
             button.append(
                 createTextElement(
                     'span',
@@ -445,10 +806,197 @@ function renderChoices(choices) {
                 ),
             );
         }
-        button.addEventListener('click', () => submitAnswer(choice.value));
+        button.addEventListener(
+            'click',
+            () => submitAnswer(choice.value, button),
+        );
         dom.choiceControls.append(button);
     });
-    window.setTimeout(() => dom.choiceControls.querySelector('button')?.focus(), 0);
+}
+
+
+function visualTokenText(token) {
+    if (token === null || token === undefined) {
+        return '';
+    }
+    if (typeof token !== 'object') {
+        return String(token);
+    }
+    const directValue = (
+        token.glyph
+        ?? token.symbol
+        ?? token.value
+        ?? token.label
+        ?? token.character
+    );
+    if (directValue !== null && directValue !== undefined) {
+        return String(directValue);
+    }
+
+    const direction = String(token.direction || '').toLowerCase();
+    const directionGlyphs = {
+        up: '↑',
+        north: '↑',
+        'up-right': '↗',
+        northeast: '↗',
+        'north-east': '↗',
+        right: '→',
+        east: '→',
+        'down-right': '↘',
+        southeast: '↘',
+        'south-east': '↘',
+        down: '↓',
+        south: '↓',
+        'down-left': '↙',
+        southwest: '↙',
+        'south-west': '↙',
+        left: '←',
+        west: '←',
+        'up-left': '↖',
+        northwest: '↖',
+        'north-west': '↖',
+    };
+    if (directionGlyphs[direction]) {
+        return directionGlyphs[direction];
+    }
+
+    const angle = Number(token.angle ?? token.rotation);
+    if (Number.isFinite(angle)) {
+        const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+        const index = Math.round((((angle % 360) + 360) % 360) / 45) % 8;
+        return arrows[index];
+    }
+    return '•';
+}
+
+
+function directionVisualData(data) {
+    let arrows = (
+        (Array.isArray(data.items) && data.items.length > 0)
+            ? data.items
+            : (data.arrows ?? data.grid ?? [])
+    );
+    if (!Array.isArray(arrows)) {
+        arrows = [];
+    }
+    const nested = Array.isArray(arrows[0]);
+    const flattened = nested ? arrows.flat() : arrows;
+    let columns = Number(
+        data.columns
+        ?? data.grid_columns
+        ?? data.grid_size
+        ?? (nested ? arrows[0]?.length : 0),
+    );
+    if (!Number.isFinite(columns) || columns < 1) {
+        const square = Math.sqrt(flattened.length);
+        columns = Number.isInteger(square) ? square : 0;
+    }
+    return {
+        arrows: flattened,
+        columns: Math.max(0, Math.min(6, Math.round(columns))),
+    };
+}
+
+
+function arrowTokenData(token) {
+    const rawRotation = typeof token === 'object' && token !== null
+        ? token.rotation_deg ?? token.angle ?? token.rotation
+        : null;
+    const numericRotation = Number(rawRotation);
+    if (rawRotation !== null && Number.isFinite(numericRotation)) {
+        const rotation = Math.round(
+            ((numericRotation % 360) + 360) % 360,
+        );
+        if (SUPPORTED_ARROW_ROTATIONS.has(rotation)) {
+            return {
+                glyph: visualTokenText(token),
+                rotation,
+            };
+        }
+        const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+        return {
+            glyph: arrows[Math.round(rotation / 45) % arrows.length],
+            rotation: null,
+        };
+    }
+    return {
+        glyph: visualTokenText(token),
+        rotation: null,
+    };
+}
+
+
+function symbolVisualData(data) {
+    if (Array.isArray(data.sequences) && data.sequences.length >= 2) {
+        return [data.sequences[0], data.sequences[1]].map((sequence) => (
+            Array.isArray(sequence) ? sequence : [sequence]
+        ));
+    }
+
+    const left = (
+        data.left_sequence
+        ?? data.left_symbols
+        ?? (
+            Array.isArray(data.left_tokens)
+                ? data.left_tokens.map((token) => token.symbol)
+                : undefined
+        )
+        ?? data.left
+    );
+    const right = (
+        data.right_sequence
+        ?? data.right_symbols
+        ?? (
+            Array.isArray(data.right_tokens)
+                ? data.right_tokens.map((token) => token.symbol)
+                : undefined
+        )
+        ?? data.right
+    );
+    if (left !== undefined || right !== undefined) {
+        return [left, right].map((sequence) => (
+            Array.isArray(sequence) ? sequence : [sequence]
+        ));
+    }
+
+    if (Array.isArray(data.symbols)) {
+        if (
+            data.symbols.length === 2
+            && data.symbols.some((symbol) => Array.isArray(symbol))
+        ) {
+            return data.symbols.map((sequence) => (
+                Array.isArray(sequence) ? sequence : [sequence]
+            ));
+        }
+        if (data.symbols.length === 2) {
+            return [[data.symbols[0]], [data.symbols[1]]];
+        }
+    }
+    return [[], []];
+}
+
+
+function symbolAccessibilityLabel(data) {
+    const accessibleSequence = (tokens) => {
+        if (!Array.isArray(tokens)) {
+            return [];
+        }
+        return tokens.map((token) => (
+            typeof token === 'object' && token !== null
+                ? token.accessible_label || visualTokenText(token)
+                : String(token)
+        ));
+    };
+    const leftLabels = accessibleSequence(data.left_tokens);
+    const rightLabels = accessibleSequence(data.right_tokens);
+    if (!leftLabels.length || !rightLabels.length) {
+        return null;
+    }
+    return (
+        `Left sequence: ${leftLabels.join(', ')}. `
+        + `Right sequence: ${rightLabels.join(', ')}. `
+        + 'Do these symbol sequences match?'
+    );
 }
 
 
@@ -458,30 +1006,100 @@ function renderGenericVisual(round) {
     const kind = round.kind || 'text';
     visual.replaceChildren();
     visual.className = `round-visual round-visual--${kind}`;
+    visual.setAttribute('role', 'img');
     visual.setAttribute('aria-label', round.prompt || 'Current challenge');
 
-    if (kind === 'direction' || Array.isArray(data.arrows)) {
-        const arrows = data.arrows || [];
+    if (
+        kind === 'direction'
+        || Array.isArray(data.arrows)
+        || Array.isArray(data.grid)
+    ) {
+        const directionData = directionVisualData(data);
+        const itemLabels = directionData.arrows
+            .map((arrow) => (
+                typeof arrow === 'object' && arrow !== null
+                    ? arrow.accessible_label
+                    : null
+            ))
+            .filter((label) => (
+                typeof label === 'string' && label.trim()
+            ));
+        const sequenceLabels = Array.isArray(data.accessible_sequence)
+            ? data.accessible_sequence.filter((label) => (
+                typeof label === 'string' && label.trim()
+            ))
+            : [];
+        const accessibleDirections = (
+            itemLabels.length === directionData.arrows.length
+                ? itemLabels
+                : sequenceLabels
+        );
+        if (accessibleDirections.length === directionData.arrows.length) {
+            visual.setAttribute(
+                'aria-label',
+                `Find the odd arrow. Row by row: ${accessibleDirections.join('; ')}.`,
+            );
+        }
         const row = document.createElement('div');
         row.className = 'arrow-row';
-        arrows.forEach((arrow) => row.append(
-            createTextElement('span', 'arrow-token', arrow),
-        ));
+        if (directionData.columns >= 2) {
+            row.dataset.columns = String(directionData.columns);
+        }
+        row.setAttribute('aria-hidden', 'true');
+        directionData.arrows.forEach((arrow) => {
+            const tokenData = arrowTokenData(arrow);
+            const token = document.createElement('span');
+            token.className = 'arrow-token';
+            if (tokenData.rotation !== null) {
+                token.dataset.rotation = String(tokenData.rotation);
+            }
+            token.append(createTextElement(
+                'span',
+                'arrow-token__glyph',
+                tokenData.glyph,
+            ));
+            row.append(token);
+        });
         visual.append(row);
         return;
     }
 
-    if (Array.isArray(data.symbols)) {
-        const symbols = data.symbols || [data.left, data.right];
-        const pair = document.createElement('div');
-        pair.className = 'symbol-pair';
-        symbols.filter(Boolean).forEach((symbol, index) => {
-            pair.append(createTextElement('span', 'symbol-token', symbol));
+    if (
+        Array.isArray(data.symbols)
+        || Array.isArray(data.sequences)
+        || data.left_sequence !== undefined
+        || data.left_symbols !== undefined
+        || data.left_tokens !== undefined
+        || data.right_tokens !== undefined
+        || data.left !== undefined
+        || data.right !== undefined
+    ) {
+        const sequences = symbolVisualData(data);
+        const accessibleLabel = symbolAccessibilityLabel(data);
+        if (accessibleLabel) {
+            visual.setAttribute('aria-label', accessibleLabel);
+        }
+        const comparison = document.createElement('div');
+        comparison.className = 'symbol-comparison';
+        comparison.setAttribute('aria-hidden', 'true');
+        sequences.forEach((sequence, index) => {
+            const group = document.createElement('div');
+            group.className = 'symbol-sequence';
+            sequence.filter((symbol) => symbol !== null).forEach((symbol) => {
+                group.append(createTextElement(
+                    'span',
+                    'symbol-token',
+                    visualTokenText(symbol),
+                ));
+            });
+            comparison.append(group);
             if (index === 0) {
-                pair.append(createTextElement('span', 'symbol-divider', '|'));
+                comparison.append(
+                    createTextElement('span', 'symbol-divider', '|'),
+                );
             }
         });
-        visual.append(pair);
+        visual.append(comparison);
         return;
     }
 
@@ -505,12 +1123,22 @@ function renderGenericVisual(round) {
     if (data.scrambled) {
         const letters = data.letters
             || String(data.word || data.scrambled || '').split('');
+        const scramble = document.createElement('div');
+        scramble.className = 'scramble-visual';
         const row = document.createElement('div');
         row.className = 'letter-row';
         Array.from(letters).forEach((letter) => row.append(
             createTextElement('span', 'letter-tile', letter),
         ));
-        visual.append(row);
+        scramble.append(row);
+        if (data.hint) {
+            scramble.append(createTextElement(
+                'p',
+                'scramble-hint',
+                `Hint · ${data.hint}`,
+            ));
+        }
+        visual.append(scramble);
         return;
     }
 
@@ -557,14 +1185,23 @@ function revealMemoryAnswer(round) {
     if (state.round?.round_id !== round.round_id) {
         return;
     }
+    if (
+        state.preview.roundId
+        && state.preview.roundId !== round.round_id
+    ) {
+        return;
+    }
+    clearPreviewTimer();
     dom.roundVisual.classList.add('is-hidden');
     dom.roundVisual.setAttribute('aria-hidden', 'true');
     dom.roundVisual.removeAttribute('aria-label');
     dom.roundVisual.replaceChildren();
     dom.memoryCurtain.hidden = false;
     const hiddenPrompt = round.hidden_prompt || 'What did you see?';
+    const curtainDots = createTextElement('span', '', '● ● ●');
+    curtainDots.setAttribute('aria-hidden', 'true');
     dom.memoryCurtain.replaceChildren(
-        createTextElement('span', '', '● ● ●'),
+        curtainDots,
         createTextElement('strong', '', hiddenPrompt),
     );
     dom.roundPrompt.textContent = hiddenPrompt;
@@ -573,23 +1210,131 @@ function revealMemoryAnswer(round) {
     dom.answerRow.hidden = false;
     dom.answerInput.value = '';
     dom.answerInput.inputMode = 'numeric';
-    dom.answerInput.focus();
-    state.previewTimer = null;
+    dom.answerInput.focus({preventScroll: true});
+    scheduleCountdownStart(round);
+}
+
+
+function memoryPreviewMatches(roundId) {
+    return (
+        state.preview.roundId === roundId
+        && state.round?.round_id === roundId
+        && dom.answerForm.hidden
+    );
+}
+
+
+function beginMemoryPreviewTimer(roundId) {
+    const preview = state.preview;
+    if (!memoryPreviewMatches(roundId)) {
+        return;
+    }
+    if (document.visibilityState === 'hidden') {
+        preview.paused = true;
+        return;
+    }
+    if (preview.remainingMs <= 0) {
+        revealMemoryAnswer(state.round);
+        return;
+    }
+
+    preview.paused = false;
+    preview.lastTick = window.performance.now();
+    preview.timer = window.setTimeout(() => {
+        preview.timer = null;
+        if (!memoryPreviewMatches(roundId)) {
+            return;
+        }
+        const elapsed = Math.max(
+            0,
+            window.performance.now() - preview.lastTick,
+        );
+        preview.remainingMs = Math.max(0, preview.remainingMs - elapsed);
+        preview.lastTick = null;
+        if (preview.remainingMs > 0) {
+            beginMemoryPreviewTimer(roundId);
+            return;
+        }
+        revealMemoryAnswer(state.round);
+    }, preview.remainingMs);
+}
+
+
+function scheduleMemoryPreviewAfterPaint(roundId, paintedFrames = 0) {
+    if (!memoryPreviewMatches(roundId)) {
+        return;
+    }
+    if (document.visibilityState === 'hidden') {
+        state.preview.paused = true;
+        return;
+    }
+    state.preview.startFrame = window.requestAnimationFrame(() => {
+        state.preview.startFrame = null;
+        if (!memoryPreviewMatches(roundId)) {
+            return;
+        }
+        if (paintedFrames < 2) {
+            scheduleMemoryPreviewAfterPaint(roundId, paintedFrames + 1);
+            return;
+        }
+        beginMemoryPreviewTimer(roundId);
+    });
+}
+
+
+function pauseMemoryPreviewForVisibility() {
+    const preview = state.preview;
+    if (!preview.roundId) {
+        return;
+    }
+    if (preview.lastTick !== null) {
+        const elapsed = Math.max(
+            0,
+            window.performance.now() - preview.lastTick,
+        );
+        preview.remainingMs = Math.max(0, preview.remainingMs - elapsed);
+    }
+    if (preview.timer !== null) {
+        window.clearTimeout(preview.timer);
+        preview.timer = null;
+    }
+    if (preview.startFrame !== null) {
+        window.cancelAnimationFrame(preview.startFrame);
+        preview.startFrame = null;
+    }
+    preview.lastTick = null;
+    preview.paused = true;
+}
+
+
+function resumeMemoryPreviewFromVisibility() {
+    const preview = state.preview;
+    if (
+        !preview.roundId
+        || !preview.paused
+        || !memoryPreviewMatches(preview.roundId)
+    ) {
+        return;
+    }
+    preview.paused = false;
+    scheduleMemoryPreviewAfterPaint(preview.roundId);
 }
 
 
 function startMemoryPreview(round) {
     clearPreviewTimer();
-    state.previewRoundId = round.round_id;
+    const delay = Math.max(300, Number(round.preview_ms || 1500));
+    state.preview.roundId = round.round_id;
+    state.preview.totalMs = delay;
+    state.preview.remainingMs = delay;
+    state.preview.paused = document.visibilityState === 'hidden';
     dom.roundPrompt.textContent = instructionBySlug[round.source_slug]
         || 'Memorize this.';
     dom.memoryCurtain.hidden = true;
     dom.answerForm.hidden = true;
-    const delay = Math.max(300, Number(round.preview_ms || 1500));
-    state.previewTimer = window.setTimeout(
-        () => revealMemoryAnswer(round),
-        delay,
-    );
+    if (!state.preview.paused) {
+        scheduleMemoryPreviewAfterPaint(round.round_id);
+    }
 }
 
 
@@ -598,14 +1343,21 @@ function renderRound(round) {
         return;
     }
     clearPreviewTimer();
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    clearCountdown();
     state.round = round;
     state.roundNumber += 1;
     state.busy = false;
     dom.activeState.dataset.feedback = 'idle';
+    delete dom.activeState.dataset.levelUp;
     dom.roundSource.textContent = round.source_name || state.selected.name;
     dom.roundSource.dataset.category = categoryClass(
         round.source_category || state.selected.category,
     );
+    const roundLevel = Number(round.level ?? state.run?.level ?? 1);
+    const difficulty = round.difficulty_label || 'Foundation';
+    dom.difficultyLabel.textContent = `Level ${roundLevel} · ${difficulty}`;
     dom.roundPrompt.textContent = instructionBySlug[round.source_slug]
         || round.prompt
         || round.rules;
@@ -614,6 +1366,7 @@ function renderRound(round) {
     dom.answerInput.value = '';
     dom.answerInput.disabled = false;
     dom.submitAnswer.disabled = false;
+    dom.answerForm.setAttribute('aria-busy', 'false');
     dom.choiceControls.querySelectorAll('button').forEach((button) => {
         button.disabled = false;
     });
@@ -627,16 +1380,20 @@ function renderRound(round) {
 
     if (Number(round.preview_ms || 0) > 0) {
         startMemoryPreview(round);
-    } else if (!dom.answerRow.hidden) {
-        const numericGames = new Set([
-            'calc', 'gcd', 'progression', 'number-memory',
-        ]);
-        dom.answerInput.inputMode = numericGames.has(round.source_slug)
-            ? 'numeric'
-            : 'text';
-        dom.answerInput.autocomplete = 'off';
-        window.setTimeout(() => dom.answerInput.focus(), 0);
+        return;
     }
+
+    const numericGames = new Set([
+        'calc', 'gcd', 'progression', 'number-memory',
+    ]);
+    dom.answerInput.inputMode = numericGames.has(round.source_slug)
+        ? 'numeric'
+        : 'text';
+    dom.answerInput.autocomplete = 'off';
+    const firstChoice = dom.choiceControls.querySelector('button');
+    const focusTarget = firstChoice || dom.answerInput;
+    focusTarget.focus({preventScroll: true});
+    scheduleCountdownStart(round);
 }
 
 
@@ -649,21 +1406,278 @@ function setControlsDisabled(disabled) {
 }
 
 
-async function submitAnswer(answer) {
+function currentEnabledAnswerControl() {
+    if (
+        !state.run
+        || !state.round
+        || state.busy
+        || dom.gameView.hidden
+        || dom.activeState.hidden
+        || dom.answerForm.hidden
+    ) {
+        return null;
+    }
+    const choice = dom.choiceControls.querySelector(
+        'button:not(:disabled)',
+    );
+    if (!dom.choiceControls.hidden && choice) {
+        return choice;
+    }
+    if (!dom.answerRow.hidden && !dom.answerInput.disabled) {
+        return dom.answerInput;
+    }
+    return null;
+}
+
+
+function restoreCurrentAnswerFocus() {
+    if (state.focusRestoreFrame !== null) {
+        window.cancelAnimationFrame(state.focusRestoreFrame);
+    }
+    const runId = state.run?.run_id;
+    const roundId = state.round?.round_id;
+    state.focusRestoreFrame = window.requestAnimationFrame(() => {
+        state.focusRestoreFrame = null;
+        if (
+            state.run?.run_id !== runId
+            || state.round?.round_id !== roundId
+        ) {
+            return;
+        }
+        currentEnabledAnswerControl()?.focus({preventScroll: true});
+    });
+}
+
+
+function beginPendingFeedback(control, roundId, timedOut) {
+    clearPendingFeedback();
+    state.pendingRoundId = roundId;
+    state.pendingControl = control;
+    if (control) {
+        control.dataset.submitted = 'true';
+    }
+    dom.answerForm.setAttribute('aria-busy', 'true');
+    dom.activeState.dataset.feedback = 'pending';
+    setFeedback(
+        timedOut ? 'Time is up — checking…' : 'Checking…',
+        'pending',
+    );
+    if (!timedOut) {
+        audio.cue('click');
+    }
+    state.pendingTimer = window.setTimeout(() => {
+        state.pendingTimer = null;
+        if (
+            state.busy
+            && state.pendingRoundId === roundId
+            && state.round?.round_id === roundId
+        ) {
+            setFeedback(
+                timedOut
+                    ? 'Time is up — still checking…'
+                    : 'Still checking…',
+                'pending',
+            );
+        }
+    }, STILL_CHECKING_DELAY);
+}
+
+
+function waitForInputPaint() {
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+    });
+}
+
+
+function timeoutRetryMatches(runId, roundId, startSequence) {
+    return (
+        state.timeoutRetry.runId === runId
+        && state.timeoutRetry.roundId === roundId
+        && state.timeoutRetry.startSequence === startSequence
+        && state.run?.run_id === runId
+        && state.round?.round_id === roundId
+        && state.startSequence === startSequence
+        && state.run.ended !== true
+    );
+}
+
+
+function lockTimedOutRound(runId, roundId, startSequence) {
+    clearTimeoutRetry();
+    state.timeoutRetry.runId = runId;
+    state.timeoutRetry.roundId = roundId;
+    state.timeoutRetry.startSequence = startSequence;
+}
+
+
+function returnExpiredRunToBriefing(runId, roundId, startSequence) {
+    if (!timeoutRetryMatches(runId, roundId, startSequence)) {
+        return;
+    }
+    const game = state.selected?.slug;
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    state.busy = false;
+    if (!game) {
+        return;
+    }
+    openBriefing(game, {replaceHistory: true});
+    dom.briefingFeedback.textContent = (
+        'That run expired while reconnecting. Start a new test when ready.'
+    );
+    dom.briefingFeedback.hidden = false;
+}
+
+
+function scheduleTimedOutRetry(
+        runId,
+        roundId,
+        startSequence,
+        mode = 'answer',
+) {
+    if (!timeoutRetryMatches(runId, roundId, startSequence)) {
+        return;
+    }
+    if (state.timeoutRetry.timer !== null) {
+        window.clearTimeout(state.timeoutRetry.timer);
+    }
+    const delayIndex = Math.min(
+        state.timeoutRetry.attempts,
+        TIMEOUT_RETRY_DELAYS.length - 1,
+    );
+    const delay = TIMEOUT_RETRY_DELAYS[delayIndex];
+    state.timeoutRetry.attempts += 1;
+    state.timeoutRetry.mode = mode;
+    state.busy = false;
+    setControlsDisabled(true);
+    dom.answerForm.setAttribute('aria-busy', 'true');
+    dom.activeState.dataset.feedback = 'pending';
+    setFeedback(
+        mode === 'recover'
+            ? 'Time is up — reconnecting to your result…'
+            : 'Time is up — connection interrupted. Retrying…',
+        'pending',
+    );
+    state.timeoutRetry.timer = window.setTimeout(() => {
+        state.timeoutRetry.timer = null;
+        if (
+            !timeoutRetryMatches(runId, roundId, startSequence)
+            || state.timeoutRetry.mode !== mode
+        ) {
+            return;
+        }
+        if (mode === 'recover') {
+            recoverTimedOutRun(runId, roundId, startSequence);
+        } else {
+            submitAnswer(TIMEOUT_ANSWER, null, {
+                timedOut: true,
+                retry: true,
+            });
+        }
+    }, delay);
+}
+
+
+async function recoverTimedOutRun(runId, roundId, startSequence) {
+    if (
+        !timeoutRetryMatches(runId, roundId, startSequence)
+        || state.busy
+    ) {
+        return;
+    }
+    state.busy = true;
+    setControlsDisabled(true);
+    dom.answerForm.setAttribute('aria-busy', 'true');
+    dom.activeState.dataset.feedback = 'pending';
+    setFeedback('Time is up — recovering your result…', 'pending');
+    try {
+        const payload = await api(
+            `/api/runs/${encodeURIComponent(runId)}/quit`,
+            {method: 'POST', body: JSON.stringify({})},
+        );
+        if (!timeoutRetryMatches(runId, roundId, startSequence)) {
+            return;
+        }
+        const recoveredRun = unwrapRun(payload);
+        clearPendingFeedback();
+        clearTimeoutRetry();
+        state.run = {
+            ...state.run,
+            ...recoveredRun,
+            ended: true,
+        };
+        await finishRun(state.run);
+    } catch (error) {
+        if (!timeoutRetryMatches(runId, roundId, startSequence)) {
+            return;
+        }
+        clearPendingFeedback();
+        state.busy = false;
+        setControlsDisabled(true);
+        if (error.status >= 400 && error.status < 500) {
+            returnExpiredRunToBriefing(runId, roundId, startSequence);
+            return;
+        }
+        scheduleTimedOutRetry(
+            runId,
+            roundId,
+            startSequence,
+            'recover',
+        );
+    }
+}
+
+
+async function submitAnswer(answer, control = null, options = {}) {
     if (!state.run || !state.round || state.busy) {
         return;
     }
     const value = String(answer ?? '').trim();
-    if (!value) {
+    const timedOut = options.timedOut === true || value === TIMEOUT_ANSWER;
+    if (
+        !timedOut
+        && state.timeoutRetry.roundId === state.round.round_id
+    ) {
+        setControlsDisabled(true);
+        return;
+    }
+    if (!value && !timedOut) {
         setFeedback('Enter an answer first.', 'wrong');
         dom.answerInput.focus();
         return;
     }
+
     state.busy = true;
     clearPreviewTimer();
-    setControlsDisabled(true);
+    const countdownSnapshot = clearCountdown();
+    const submittedControl = control;
     const runId = state.run.run_id;
     const roundId = state.round.round_id;
+    const requestSequence = state.startSequence;
+    if (timedOut) {
+        if (options.retry === true) {
+            if (!timeoutRetryMatches(runId, roundId, requestSequence)) {
+                state.busy = false;
+                return;
+            }
+        } else {
+            lockTimedOutRound(runId, roundId, requestSequence);
+        }
+    }
+    beginPendingFeedback(submittedControl, roundId, timedOut);
+    setControlsDisabled(true);
+
+    // Let the pressed state and checking message paint before network work.
+    await waitForInputPaint();
+    if (
+        state.run?.run_id !== runId
+        || state.round?.round_id !== roundId
+        || state.startSequence !== requestSequence
+        || !state.busy
+    ) {
+        return;
+    }
 
     try {
         const payload = await api(
@@ -679,9 +1693,12 @@ async function submitAnswer(answer) {
         if (
             state.run?.run_id !== runId
             || state.round?.round_id !== roundId
+            || state.startSequence !== requestSequence
         ) {
             return;
         }
+        clearTimeoutRetry();
+        clearPendingFeedback();
         const runResult = unwrapRun(payload);
         const grading = runResult.result || payload.result || {};
         state.run = {...state.run, ...runResult};
@@ -689,35 +1706,46 @@ async function submitAnswer(answer) {
         const sourceName = state.round.source_name || state.selected.name;
         if (grading.correct) {
             dom.activeState.dataset.feedback = 'correct';
-            setFeedback(`${sourceName}: correct — one point added.`, 'correct');
+            if (grading.leveled_up) {
+                dom.activeState.dataset.levelUp = 'true';
+                setFeedback(
+                    `${sourceName}: correct — Level ${grading.level_after ?? runResult.level} unlocked.`,
+                    'correct',
+                );
+            } else {
+                setFeedback(
+                    `${sourceName}: correct — one point added.`,
+                    'correct',
+                );
+            }
             audio.cue('correct');
         } else {
             dom.activeState.dataset.feedback = 'wrong';
             const expected = grading.expected_answer;
-            setFeedback(
-                `${sourceName}: not quite. The answer was ${expected}.`,
-                'wrong',
-            );
+            const message = grading.timed_out
+                ? `${sourceName}: time ran out. The answer was ${expected}.`
+                : `${sourceName}: not quite. The answer was ${expected}.`;
+            setFeedback(message, 'wrong');
             audio.cue('wrong');
         }
 
         if (runResult.game_over || runResult.ended || !runResult.round) {
-            const runId = state.run.run_id;
+            const completedRunId = state.run.run_id;
             state.transitionTimer = window.setTimeout(
                 () => {
                     state.transitionTimer = null;
-                    if (state.run?.run_id === runId) {
+                    if (state.run?.run_id === completedRunId) {
                         finishRun(runResult);
                     }
                 },
                 FEEDBACK_DELAY + 120,
             );
         } else {
-            const runId = state.run.run_id;
+            const activeRunId = state.run.run_id;
             state.transitionTimer = window.setTimeout(
                 () => {
                     state.transitionTimer = null;
-                    if (state.run?.run_id === runId) {
+                    if (state.run?.run_id === activeRunId) {
                         renderRound(runResult.round);
                     }
                 },
@@ -728,35 +1756,128 @@ async function submitAnswer(answer) {
         if (
             state.run?.run_id !== runId
             || state.round?.round_id !== roundId
+            || state.startSequence !== requestSequence
         ) {
+            return;
+        }
+        clearPendingFeedback();
+        if (timedOut) {
+            state.busy = false;
+            setControlsDisabled(true);
+            if (!timeoutRetryMatches(runId, roundId, requestSequence)) {
+                return;
+            }
+            if (error.status === 404) {
+                returnExpiredRunToBriefing(
+                    runId,
+                    roundId,
+                    requestSequence,
+                );
+                return;
+            }
+            if (error.status >= 400 && error.status < 500) {
+                await recoverTimedOutRun(
+                    runId,
+                    roundId,
+                    requestSequence,
+                );
+                return;
+            }
+            scheduleTimedOutRetry(
+                runId,
+                roundId,
+                requestSequence,
+            );
             return;
         }
         state.busy = false;
         setControlsDisabled(false);
+        dom.activeState.dataset.feedback = 'wrong';
         setFeedback(error.message, 'wrong');
         if (error.status === 409) {
-            setFeedback('That round has already ended. Return to the menu.', 'wrong');
+            setFeedback(
+                'That round has already ended. Return to the menu.',
+                'wrong',
+            );
+        } else if (
+            countdownSnapshot.roundId === roundId
+            && countdownSnapshot.remainingMs > 0
+        ) {
+            scheduleCountdownStart(
+                state.round,
+                countdownSnapshot.remainingMs,
+            );
         }
+        submittedControl?.focus({preventScroll: true});
     }
+}
+
+
+function resultRunIsCurrent(runId, game, startSequence) {
+    return (
+        state.run?.run_id === runId
+        && state.run.ended === true
+        && state.selected?.slug === game
+        && state.startSequence === startSequence
+        && state.busy === false
+        && !dom.gameView.hidden
+        && !dom.resultState.hidden
+    );
 }
 
 
 async function finishRun(result) {
     clearPreviewTimer();
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    clearCountdown();
     state.busy = false;
+    const completedRunId = state.run.run_id;
+    const completedGame = state.selected.slug;
+    const completedStartSequence = state.startSequence;
+    const resultIsCurrent = () => resultRunIsCurrent(
+        completedRunId,
+        completedGame,
+        completedStartSequence,
+    );
     const score = Number(result.score ?? state.run.score ?? 0);
-    const previousBest = state.personalBests.get(state.selected.slug);
-    const isBest = previousBest === undefined || score > previousBest;
+    const previousBest = state.personalBests.get(completedGame);
+    const ranked = state.run.ranked !== false;
+    const isBest = ranked && (
+        previousBest === undefined || score > previousBest
+    );
     state.run.score = score;
     state.run.lives = Number(result.lives ?? 0);
     state.run.ended = true;
+    dom.runStatus.textContent = 'Test complete';
     showState('result');
     dom.resultScore.textContent = String(score);
-    dom.resultBest.textContent = isBest ? `${score} NEW` : String(previousBest);
+    dom.resultBest.textContent = isBest
+        ? `${score} NEW`
+        : String(previousBest ?? '—');
     dom.resultBest.dataset.best = String(isBest);
-    dom.resultMessage.textContent = score === 0
-        ? 'Every baseline starts somewhere. Take another run.'
-        : `You cleared ${score} ${score === 1 ? 'round' : 'rounds'} before losing three lives.`;
+    const remainingLives = Math.max(
+        0,
+        Number(result.lives ?? state.run.lives ?? 0),
+    );
+    const endedEarly = Boolean(
+        result.quit_early ?? state.run.quit_early,
+    ) || remainingLives > 0;
+    let resultMessage;
+    if (endedEarly) {
+        resultMessage = (
+            `This run ended early with ${score} `
+            + `${score === 1 ? 'point' : 'points'} and ${remainingLives} `
+            + `${remainingLives === 1 ? 'life' : 'lives'} remaining.`
+        );
+    } else {
+        resultMessage = score === 0
+            ? 'Every baseline starts somewhere. Take another run.'
+            : `You cleared ${score} ${score === 1 ? 'round' : 'rounds'} before losing three lives.`;
+    }
+    dom.resultMessage.textContent = ranked
+        ? resultMessage
+        : `${resultMessage} Practice scores are not ranked.`;
     if (dom.resultAverage) {
         dom.resultAverage.textContent = '…';
     }
@@ -771,11 +1892,15 @@ async function finishRun(result) {
     } else {
         audio.cue('gameover');
     }
+    window.setTimeout(() => {
+        if (resultIsCurrent()) {
+            dom.retryButton?.focus();
+        }
+    }, 0);
     await Promise.all([
-        refreshPersonalBests(),
-        refreshResultBenchmark(state.selected.slug, score),
+        refreshPersonalBests({shouldApply: resultIsCurrent}),
+        refreshResultBenchmark(completedGame, score, resultIsCurrent),
     ]);
-    window.setTimeout(() => dom.retryButton?.focus(), 0);
 }
 
 
@@ -790,11 +1915,14 @@ function ordinal(number) {
 }
 
 
-async function refreshResultBenchmark(game, score) {
+async function refreshResultBenchmark(game, score, shouldApply = () => true) {
     try {
         const benchmark = await api(
             `/api/benchmarks/${encodeURIComponent(game)}?score=${score}`,
         );
+        if (!shouldApply()) {
+            return;
+        }
         state.benchmarks.set(game, benchmark);
         if (dom.resultAverage) {
             dom.resultAverage.textContent = String(benchmark.average_score);
@@ -806,6 +1934,9 @@ async function refreshResultBenchmark(game, score) {
             dom.resultRank.textContent = `${benchmark.rank_out_of_100}/100`;
         }
     } catch (_error) {
+        if (!shouldApply()) {
+            return;
+        }
         [dom.resultAverage, dom.resultPercentile, dom.resultRank]
             .filter(Boolean)
             .forEach((element) => {
@@ -844,12 +1975,17 @@ async function backToHome(options = {}) {
             'Leave this run? Your current score will be saved.',
         );
         if (!shouldLeave) {
+            restoreCurrentAnswerFocus();
             return;
         }
     }
     state.navigating = true;
+    invalidateLeaderboardRequests();
     clearPreviewTimer();
     clearTransitionTimer();
+    clearPendingFeedback();
+    clearTimeoutRetry();
+    clearCountdown();
     state.startSequence += 1;
     state.busy = false;
     dom.startRunButton.disabled = false;
@@ -875,12 +2011,16 @@ async function backToHome(options = {}) {
 }
 
 
-async function refreshPersonalBests() {
+async function refreshPersonalBests(options = {}) {
+    const shouldApply = options.shouldApply || (() => true);
     try {
         const playerName = currentPlayerName();
         const payload = await api(
             `/api/leaderboard?player=${encodeURIComponent(playerName)}&limit=100`,
         );
+        if (!shouldApply()) {
+            return;
+        }
         const entries = unwrapLeaders(payload);
         const player = playerName.toLocaleLowerCase();
         state.personalBests.clear();
@@ -911,19 +2051,29 @@ function leaderboardMessageRow(message) {
 }
 
 
+function invalidateLeaderboardRequests() {
+    state.leaderboardRequestSequence += 1;
+}
+
+
 async function renderLeaderboard() {
+    const requestSequence = state.leaderboardRequestSequence + 1;
+    state.leaderboardRequestSequence = requestSequence;
     const game = dom.leaderboardFilter.value;
     const query = game ? `?game=${encodeURIComponent(game)}&limit=20` : '?limit=20';
     dom.leaderboardRows.replaceChildren(leaderboardMessageRow('Loading scores…'));
     try {
         const payload = await api(`/api/leaderboard${query}`);
+        if (requestSequence !== state.leaderboardRequestSequence) {
+            return false;
+        }
         const entries = unwrapLeaders(payload);
         dom.leaderboardRows.replaceChildren();
         if (!entries.length) {
             dom.leaderboardRows.append(leaderboardMessageRow(
                 'No scores yet. Your next run can be the first.',
             ));
-            return;
+            return true;
         }
         entries.forEach((entry, index) => {
             const row = document.createElement('tr');
@@ -943,8 +2093,13 @@ async function renderLeaderboard() {
             );
             dom.leaderboardRows.append(row);
         });
+        return true;
     } catch (error) {
+        if (requestSequence !== state.leaderboardRequestSequence) {
+            return false;
+        }
         dom.leaderboardRows.replaceChildren(leaderboardMessageRow(error.message));
+        return true;
     }
 }
 
@@ -956,7 +2111,10 @@ async function openLeaderboard() {
     state.catalog.forEach((game) => {
         dom.leaderboardFilter.append(new Option(game.name, game.slug));
     });
-    await renderLeaderboard();
+    const rendered = await renderLeaderboard();
+    if (!rendered) {
+        return;
+    }
     if (typeof dom.leaderboardDialog.showModal === 'function') {
         dom.leaderboardDialog.showModal();
     } else {
@@ -966,10 +2124,12 @@ async function openLeaderboard() {
 
 
 function closeLeaderboard() {
+    invalidateLeaderboardRequests();
     if (typeof dom.leaderboardDialog.close === 'function') {
         dom.leaderboardDialog.close();
     } else {
         dom.leaderboardDialog.hidden = true;
+        restoreCurrentAnswerFocus();
     }
 }
 
@@ -981,7 +2141,7 @@ function bindEvents() {
     dom.backButton?.addEventListener('click', () => backToHome());
     dom.answerForm?.addEventListener('submit', (event) => {
         event.preventDefault();
-        submitAnswer(dom.answerInput.value);
+        submitAnswer(dom.answerInput.value, dom.submitAnswer);
     });
     dom.leaderboardButton?.addEventListener('click', openLeaderboard);
     dom.closeLeaderboard?.addEventListener('click', closeLeaderboard);
@@ -991,8 +2151,26 @@ function bindEvents() {
             closeLeaderboard();
         }
     });
+    dom.leaderboardDialog?.addEventListener('close', () => {
+        invalidateLeaderboardRequests();
+        restoreCurrentAnswerFocus();
+    });
 
     document.addEventListener('keydown', (event) => {
+        if (event.repeat) {
+            const focusedTag = document.activeElement?.tagName;
+            const repeatIsOnActiveAnswer = (
+                !dom.gameView.hidden
+                && !dom.activeState.hidden
+                && dom.activeState.contains(document.activeElement)
+                && focusedTag !== 'INPUT'
+                && focusedTag !== 'TEXTAREA'
+            );
+            if (repeatIsOnActiveAnswer) {
+                event.preventDefault();
+            }
+            return;
+        }
         if (event.target?.closest?.('#themeSelect')) {
             return;
         }
@@ -1005,6 +2183,9 @@ function bindEvents() {
             return;
         }
         if (dom.gameView.hidden || dom.activeState.hidden || state.busy) {
+            return;
+        }
+        if (!dom.activeState.contains(document.activeElement)) {
             return;
         }
         const focusedTag = document.activeElement?.tagName;
@@ -1031,24 +2212,13 @@ function bindEvents() {
     });
 
     document.addEventListener('visibilitychange', () => {
-        if (
-            document.visibilityState === 'visible'
-            && state.round
-            && Number(state.round.preview_ms || 0) > 0
-            && !dom.answerForm.hidden
-        ) {
+        if (document.visibilityState === 'hidden') {
+            pauseCountdownForVisibility();
+            pauseMemoryPreviewForVisibility();
             return;
         }
-        if (
-            document.visibilityState === 'visible'
-            && state.round
-            && Number(state.round.preview_ms || 0) > 0
-        ) {
-            dom.roundVisual.classList.remove('is-hidden');
-            startMemoryPreview(state.round);
-        } else if (document.visibilityState === 'hidden') {
-            clearPreviewTimer();
-        }
+        resumeCountdownFromVisibility();
+        resumeMemoryPreviewFromVisibility();
     });
 
     window.addEventListener('popstate', (event) => {

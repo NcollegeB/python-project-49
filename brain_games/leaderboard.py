@@ -133,6 +133,18 @@ def _filter_entries(entries, field, value):
     ]
 
 
+def _filter_entry_prefix(entries, field, value):
+    if value is None:
+        return entries
+    if not isinstance(value, str):
+        raise TypeError('{} prefix must be a string or None'.format(field))
+    key = value.strip().casefold()
+    return [
+        entry for entry in entries
+        if str(entry[field]).casefold().startswith(key)
+    ]
+
+
 class Leaderboard:
     """Store each player's best score for every game in a JSON file."""
 
@@ -163,6 +175,7 @@ class Leaderboard:
             limit: int = 10,
             game: Optional[str] = None,
             player: Optional[str] = None,
+            game_prefix: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """Return high scores, optionally restricted by game or player."""
         if isinstance(limit, bool) or not isinstance(limit, int):
@@ -172,6 +185,7 @@ class Leaderboard:
 
         entries = self._load_entries()
         entries = _filter_entries(entries, 'game', game)
+        entries = _filter_entry_prefix(entries, 'game', game_prefix)
         entries = _filter_entries(entries, 'player', player)
 
         entries.sort(key=self._sort_key)

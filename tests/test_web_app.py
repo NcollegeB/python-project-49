@@ -15,6 +15,11 @@ FORBIDDEN_ANSWER_KEYS = {
     'answer',
     'correct_answer',
     'expected_answer',
+    'is_prime',
+    'matches',
+    'mismatch_index',
+    'mismatch_kind',
+    'target_index',
 }
 
 
@@ -206,6 +211,56 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(409, ended.status_code)
         self.assertEqual('run_ended', ended.get_json()['error'])
 
+    def test_timing_modes_keep_assisted_runs_out_of_rankings(self):
+        standard = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'Standard',
+            'timing_mode': 'standard',
+        }).get_json()
+        relaxed = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'Relaxed',
+            'timing_mode': 'relaxed',
+        }).get_json()
+        self_paced = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'SelfPaced',
+            'timing_mode': 'self-paced',
+        }).get_json()
+
+        self.assertTrue(standard['ranked'])
+        self.assertFalse(relaxed['ranked'])
+        self.assertFalse(self_paced['ranked'])
+        self.assertEqual('standard', standard['timing_mode'])
+        self.assertEqual('relaxed', relaxed['timing_mode'])
+        self.assertEqual('self-paced', self_paced['timing_mode'])
+        self.assertEqual(
+            standard['round']['time_limit_ms'] * 2,
+            relaxed['round']['time_limit_ms'],
+        )
+        self.assertEqual(0, self_paced['round']['time_limit_ms'])
+
+        for run in (standard, relaxed, self_paced):
+            self.client.post(
+                '/api/runs/{}/quit'.format(run['run_id']),
+            )
+
+        entries = self.client.get(
+            '/api/leaderboard?game=even&limit=10',
+        ).get_json()['entries']
+        self.assertEqual(['Standard'], [
+            entry['player'] for entry in entries
+        ])
+
+    def test_leaderboard_hides_scores_from_the_previous_ruleset(self):
+        self.store._leaderboard.record('Legacy', 'even', 999)
+
+        entries = self.client.get(
+            '/api/leaderboard?game=even&limit=10',
+        ).get_json()['entries']
+
+        self.assertEqual([], entries)
+
     def test_unknown_resources_and_bad_requests_are_controlled_json(self):
         unknown_game = self.client.post('/api/runs', json={
             'game': 'not-a-game',
@@ -222,6 +277,16 @@ class WebAppTest(unittest.TestCase):
         )
         bad_limit = self.client.get('/api/leaderboard?limit=all')
         bad_player = self.client.get('/api/leaderboard?player=')
+        bad_timing = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'Ada',
+            'timing_mode': 'slowest',
+        })
+        malformed_timing = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'Ada',
+            'timing_mode': [],
+        })
         oversized = self.client.post(
             '/api/runs',
             data='x' * (17 * 1024),
@@ -235,6 +300,8 @@ class WebAppTest(unittest.TestCase):
             (bad_json, 400, 'invalid_request'),
             (bad_limit, 400, 'invalid_request'),
             (bad_player, 400, 'invalid_request'),
+            (bad_timing, 400, 'invalid_request'),
+            (malformed_timing, 400, 'invalid_request'),
             (oversized, 413, 'request_too_large'),
         )
         for response, status, error_code in expected:

@@ -14,8 +14,9 @@ RUN pip install poetry
 RUN poetry config virtualenvs.create false \
   && poetry install --no-interaction --no-ansi
 
-# Make port 80 available to the world outside this container
-EXPOSE 80
+# Serve the local browser arcade on Gunicorn's application port.
+EXPOSE 8000
 
-# Run app.py when the container launches
-CMD ["gunicorn", "brain_games.app:app"]
+# Keep one process because active game rounds live in memory. Threads allow
+# concurrent local players while the file-backed leaderboard remains shared.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "4", "brain_games.app:app"]

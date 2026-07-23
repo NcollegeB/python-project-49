@@ -15,3 +15,5 @@ brain_games.db
 .brain_games/
 leaderboard.json
 leaderboard.json.lock
+.vercel/
+.env.local

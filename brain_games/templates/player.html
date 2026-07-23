@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+
+{% block title %}Player — BrainHacker{% endblock %}
+
+{% block content %}
+<section class="player-page" aria-labelledby="playerTitle">
+    {% if current_user %}
+        <header class="player-page-heading">
+            <p class="eyebrow">Player</p>
+            <h1 id="playerTitle">
+                {{ current_user.username|default(current_user, true)|e }}
+            </h1>
+            <p>
+                Your best score for every game, saved to this account.
+            </p>
+        </header>
+
+        <div class="player-scores-heading">
+            <h2>Your scores</h2>
+            <p>{{ played_count }} of {{ score_rows|length }} games played</p>
+        </div>
+
+        <div class="player-score-grid">
+            {% for row in score_rows %}
+                <a class="player-score-card"
+                   data-game="{{ row.slug|e }}"
+                   data-score="{% if row.personal_score is not none %}{{ row.personal_score }}{% endif %}"
+                   href="/play/{{ row.slug|e }}">
+                    <span class="player-score-name">{{ row.name }}</span>
+                    <span class="player-score-label">Best score</span>
+                    <strong class="player-score-value">
+                        {% if row.personal_score is not none %}
+                            {{ row.personal_score }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </strong>
+                    <span class="player-score-status">
+                        {% if row.personal_score is not none %}
+                            Saved
+                        {% else %}
+                            Not played
+                        {% endif %}
+                    </span>
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="player-signin">
+            <p class="eyebrow">Player</p>
+            <h1 id="playerTitle">Your scores live here.</h1>
+            <p>
+                Log in or create an account to save your best score for every game.
+            </p>
+            <div class="player-signin-actions">
+                <a class="primary-button" href="/login">Log in</a>
+                <a class="secondary-button" href="/register">Create account</a>
+            </div>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,41 +1,34 @@
-[tool.poetry]
+[project]
 name = "hexlet-code"
-version = "0.4.0"
-description = "A cognitive terminal arcade with a ten-game mixed test"
-authors = ["Nikolai Gordienko <nicolas.gordienko@gmail.com>"]
-packages = [
-  { include = "brain_games" },
+version = "0.6.0"
+description = "BrainHacker browser tests and terminal games with fixed score benchmarks"
+readme = "README.md"
+requires-python = ">=3.9,<4.0"
+authors = [
+  { name = "Nikolai Gordienko", email = "nicolas.gordienko@gmail.com" },
 ]
-repository = "https://github.com/NcollegeB/python-project-49"
 classifiers = [
-    "Topic :: Software Development :: Build Tools",
-    "Topic :: Software Development :: Libraries :: Python Modules"
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "prompt>=0.4.1,<0.5.0",
+  "flask>=2.3.2,<3.0.0",
+  "flask-wtf>=1.1.1,<2.0.0",
+  "wtforms>=3.0.1,<4.0.0",
+  "flask-cors>=4.0.0,<5.0.0",
+  "gunicorn>=21.2.0,<22.0.0",
+  "flask-sqlalchemy>=3.1.1,<4.0.0",
+  "python-dotenv>=1.0.0,<2.0.0",
+  "flask-admin>=1.6.1,<2.0.0",
+  "psycopg2-binary>=2.9.12,<3.0.0",
+  "sqlalchemy>=2.0.51,<3.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/NcollegeB/python-project-49"
 
-[tool.poetry.dependencies]
-python = "^3.8"
-prompt = "^0.4.1"
-flask = "^2.3.2"
-flask-wtf = "^1.1.1"
-wtforms = "^3.0.1"
-flask-cors = "^4.0.0"
-gunicorn = "^21.2.0"
-flask-sqlalchemy = "^3.1.1"
-python-dotenv = "^1.0.0"
-flask-admin = "^1.6.1"
-psycopg2 = "^2.9.7"
-psycopg2-binary = "^2.9.7"
-sqlalchemy = "^2.0.21"
-
-[tool.poetry.dev-dependencies]
-flake8 = "^5.0.4"
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
+[project.scripts]
 brain-games = "brain_games.scripts.brain_games:main"
 brain-even = "brain_games.scripts.brain_even:main"
 brain-calc = "brain_games.scripts.brain_calc:main"
@@ -48,3 +41,17 @@ brain-direction-focus = "brain_games.scripts.brain_direction_focus:main"
 brain-symbol-match = "brain_games.scripts.brain_symbol_match:main"
 brain-word-scramble = "brain_games.scripts.brain_word_scramble:main"
 brain-culmination = "brain_games.scripts.brain_culmination:main"
+
+[dependency-groups]
+dev = [
+  "flake8==7.1.2",
+]
+
+[tool.poetry]
+packages = [
+  { include = "brain_games" },
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

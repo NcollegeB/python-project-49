@@ -66,7 +66,27 @@ class LeaderboardTest(unittest.TestCase):
             [entry['player'] for entry in prime_scores],
             ['Bob', 'Zoe'],
         )
+        ada_scores = self.leaderboard.top(player='ADA')
+        self.assertEqual(['Ada'], [
+            entry['player'] for entry in ada_scores
+        ])
         self.assertEqual(self.leaderboard.top(limit=0), [])
+
+    def test_top_can_isolate_a_versioned_game_prefix(self):
+        current = self.leaderboard.record('Ada', 'r2:even', 7)
+        self.leaderboard.record('Grace', 'even', 99)
+        self.leaderboard.record('Lin', 'r1:prime', 98)
+        second_current = self.leaderboard.record('Mina', 'R2:prime', 6)
+
+        entries = self.leaderboard.top(game_prefix=' R2: ')
+
+        self.assertEqual([current, second_current], entries)
+        self.assertEqual(
+            [current],
+            self.leaderboard.top(game='r2:EVEN', game_prefix='r2:'),
+        )
+        with self.assertRaises(TypeError):
+            self.leaderboard.top(game_prefix=2)
 
     def test_record_writes_with_atomic_replace_and_utc_timestamp(self):
         with mock.patch(

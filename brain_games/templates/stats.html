@@ -1,0 +1,99 @@
+{% extends "layout.html" %}
+
+{% block title %}Statistics — BrainHacker{% endblock %}
+
+{% block content %}
+<section class="stats-page" aria-labelledby="statsTitle">
+    <header class="page-heading">
+        <p class="eyebrow">BrainHacker benchmark</p>
+        <h1 id="statsTitle">Understand your score</h1>
+        <p>
+            Compare each personal best with a stable reference score. The same score always
+            receives the same ranking, whether ten people play or ten thousand.
+        </p>
+    </header>
+
+    <aside class="method-note" aria-labelledby="methodTitle">
+        <h2 id="methodTitle">What the percentile means</h2>
+        <p>
+            BrainHacker uses a fixed, model-based benchmark for each test. It does not use live
+            player data; it is not measured population data. The model uses a fixed reference
+            accuracy for each configured difficulty level and assumes three correct answers
+            advance a level. This is not a scientific population study.
+            A result in the 75th percentile means that score is as high as or higher than
+            about 75 out of 100 outcomes predicted by the BrainHacker model.
+        </p>
+    </aside>
+
+    <div class="stats-section-heading">
+        <div>
+            <p class="eyebrow">Reference table</p>
+            <h2>Scores by test</h2>
+        </div>
+        {% if not current_user %}
+            <p><a href="/login">Log in</a> to show your saved bests beside the benchmark.</p>
+        {% endif %}
+    </div>
+
+    <div class="table-scroll stats-table-wrap" tabindex="0" aria-label="BrainHacker score benchmarks">
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th scope="col">Test</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Average score</th>
+                    {% if current_user %}
+                        <th scope="col">Your best</th>
+                        <th scope="col">Percentile</th>
+                        <th scope="col">Percentile rank / 100</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for benchmark in benchmarks|default([], true) %}
+                    {% set personal = personal_stats.get(benchmark.slug) if personal_stats is mapping else none %}
+                    <tr>
+                        <th scope="row">
+                            <a href="/play/{{ benchmark.slug|e }}">{{ benchmark.name }}</a>
+                        </th>
+                        <td>{{ benchmark.category }}</td>
+                        <td class="number-cell">{{ benchmark.average_score }}</td>
+                        {% if current_user %}
+                            <td class="number-cell">
+                                {% if benchmark.personal_score is defined and benchmark.personal_score is not none %}
+                                    {{ benchmark.personal_score }}
+                                {% elif personal %}
+                                    {{ personal.score|default(personal.personal_score, true) }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td class="number-cell">
+                                {% if benchmark.percentile is defined and benchmark.percentile is not none %}
+                                    {{ benchmark.percentile_label }}
+                                {% elif personal %}
+                                    {{ personal.percentile_label }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td class="number-cell">
+                                {% if benchmark.rank_out_of_100 is defined and benchmark.rank_out_of_100 is not none %}
+                                    {{ benchmark.rank_out_of_100 }}
+                                {% elif personal %}
+                                    {{ personal.rank_out_of_100 }}
+                                {% else %}—{% endif %}
+                            </td>
+                        {% endif %}
+                    </tr>
+                {% else %}
+                    <tr class="empty-row">
+                        <td colspan="6">Benchmark statistics are not available right now.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="stats-footnote">
+        “Average” is the center of BrainHacker’s reference model, rounded for display. It is a
+        practice target, not a diagnosis or measure of intelligence.
+    </p>
+</section>
+{% endblock %}

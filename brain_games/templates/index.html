@@ -1,4 +1,237 @@
 {% extends "layout.html" %}
+
+{% block title %}BrainHacker — Test your intelligence{% endblock %}
+
+{% block game_navigation %}
+<button class="nav-button" id="leaderboardButton" type="button">Leaderboard</button>
+<button class="nav-button sound-toggle" id="soundToggle" type="button"
+        aria-pressed="true" aria-label="Sound on" title="Sound on">
+    <span class="sound-glyph" aria-hidden="true">♪</span>
+    <span data-sound-label>Sound on</span>
+</button>
+{% endblock %}
+
 {% block content %}
-<!-- <div style="height: 443px;"></div> -->
+<section class="home-view" id="homeView" aria-labelledby="heroTitle">
+    <header class="home-intro">
+        <h1 id="heroTitle">test your intelligence</h1>
+    </header>
+
+    <section class="game-library" id="gameLibrary" aria-labelledby="libraryTitle">
+        <h2 class="visually-hidden" id="libraryTitle">Choose a game</h2>
+
+        <div class="game-grid" id="gameGrid">
+            <p class="loading-note" role="status">Loading games…</p>
+        </div>
+    </section>
+</section>
+
+<section class="game-view" id="gameView" aria-labelledby="stageTitle" hidden>
+    <div class="game-nav">
+        <button class="back-button" id="backButton" type="button">
+            <span aria-hidden="true">←</span>
+            <span>Test directory</span>
+        </button>
+        <p class="run-status" id="runStatus">Test setup</p>
+    </div>
+
+    <article class="stage-shell">
+        <header class="stage-header">
+            <div class="stage-identity">
+                <p class="stage-category" id="stageCategory">Challenge</p>
+                <h1 id="stageTitle">Ready?</h1>
+                <p class="stage-rules" id="stageRules">Read the prompt, then answer as accurately as you can.</p>
+            </div>
+
+            <dl class="run-hud" aria-label="Current run status">
+                <div>
+                    <dt>Score</dt>
+                    <dd id="scoreValue">0</dd>
+                </div>
+                <div class="lives-stat">
+                    <dt>Lives</dt>
+                    <dd id="livesValue" aria-label="3 lives">3</dd>
+                </div>
+                <div>
+                    <dt>Level</dt>
+                    <dd id="levelValue">1/5</dd>
+                </div>
+                <div>
+                    <dt>Progress</dt>
+                    <dd id="levelProgress" aria-label="0 of 3 correct answers">0/3</dd>
+                </div>
+                <div>
+                    <dt>Round</dt>
+                    <dd id="roundValue">1</dd>
+                </div>
+            </dl>
+        </header>
+
+        <div class="cycle-track" id="cycleTrack" aria-label="Culmination cycle progress" hidden></div>
+
+        <div class="stage-card">
+            <section class="briefing-state" id="briefingState" aria-labelledby="briefingTitle">
+                <div class="briefing-icon" id="briefingIcon" aria-hidden="true">01</div>
+                <p class="eyebrow">Instructions</p>
+                <h2 id="briefingTitle">Prepare to focus</h2>
+                <p id="briefingDescription">Your first round begins when you are ready.</p>
+                <fieldset class="timing-selector" id="timingMode">
+                    <legend>Choose your pace</legend>
+                    <div class="timing-options">
+                        <label class="timing-option">
+                            <input type="radio" name="timing-mode" value="standard" checked>
+                            <span class="timing-option__name">Standard</span>
+                            <span class="timing-option__detail">Ranked · calibrated limits</span>
+                        </label>
+                        <label class="timing-option">
+                            <input type="radio" name="timing-mode" value="relaxed">
+                            <span class="timing-option__name">Relaxed · 2× answer time</span>
+                            <span class="timing-option__detail">Practice score; memory previews stay fixed</span>
+                        </label>
+                        <label class="timing-option">
+                            <input type="radio" name="timing-mode" value="self-paced">
+                            <span class="timing-option__name">Self-paced · No answer deadline</span>
+                            <span class="timing-option__detail">Practice score; memory previews stay fixed</span>
+                        </label>
+                    </div>
+                </fieldset>
+                <p class="briefing-feedback" id="briefingFeedback"
+                   role="alert" hidden></p>
+                <button class="primary-button start-run-button" id="startRunButton" type="button">
+                    Begin test <span class="button-arrow" aria-hidden="true">→</span>
+                </button>
+                <p class="key-hint"><kbd>Enter</kbd> to begin</p>
+            </section>
+
+            <section class="active-state" id="activeState" aria-labelledby="roundPrompt"
+                     tabindex="-1" hidden>
+                <div class="round-meta">
+                    <p class="round-source" id="roundSource">Round challenge</p>
+                    <p class="difficulty-label" id="difficultyLabel">Level 1 · Foundation</p>
+                </div>
+                <h2 class="round-prompt" id="roundPrompt">Question</h2>
+
+                <div class="round-timer" id="roundTimer" hidden>
+                    <div class="round-timer__labels">
+                        <span>Time remaining</span>
+                        <strong id="timerText">—</strong>
+                    </div>
+                    <progress id="timerProgress" max="1" value="1"
+                              aria-label="Time remaining"></progress>
+                    <span class="visually-hidden" id="timerAnnouncement"
+                          role="status" aria-live="polite" aria-atomic="true"></span>
+                </div>
+
+                <div class="challenge-canvas">
+                    <div class="round-visual" id="roundVisual" aria-live="polite"></div>
+                    <div class="memory-curtain" id="memoryCurtain" role="status"
+                         aria-live="polite" hidden>
+                        <span aria-hidden="true">• • •</span>
+                        <strong>Now answer from memory</strong>
+                    </div>
+                </div>
+
+                <form class="answer-form" id="answerForm" autocomplete="off"
+                      aria-busy="false">
+                    <div class="choice-controls" id="choiceControls" role="group" aria-label="Answer choices"></div>
+                    <div class="answer-row" id="answerRow">
+                        <label class="visually-hidden" for="answerInput">Your answer</label>
+                        <input id="answerInput" name="answer" type="text" inputmode="text"
+                               autocapitalize="none" spellcheck="false" placeholder="Type your answer">
+                        <button class="primary-button submit-answer" id="submitAnswer" type="submit">
+                            Submit <span class="button-arrow" aria-hidden="true">→</span>
+                        </button>
+                    </div>
+                </form>
+
+                <div class="feedback-region" id="feedbackRegion" role="status" aria-live="polite" aria-atomic="true"></div>
+            </section>
+
+            <section class="result-state" id="resultState" aria-labelledby="resultHeading" hidden>
+                <p class="eyebrow">Score report</p>
+                <h2 id="resultHeading">Test complete</h2>
+                <p class="result-message" id="resultMessage">Your score is ready.</p>
+
+                <dl class="result-scores">
+                    <div class="result-primary">
+                        <dt>Final score</dt>
+                        <dd id="resultScore">0</dd>
+                    </div>
+                    <div>
+                        <dt>Personal best</dt>
+                        <dd id="resultBest">0</dd>
+                    </div>
+                    <div>
+                        <dt>BrainHacker average</dt>
+                        <dd id="resultAverage">—</dd>
+                    </div>
+                    <div>
+                        <dt>Percentile</dt>
+                        <dd id="resultPercentile">—</dd>
+                    </div>
+                    <div>
+                        <dt>Percentile rank</dt>
+                        <dd id="resultRank">—</dd>
+                    </div>
+                </dl>
+
+                <p class="benchmark-note">
+                    Percentiles use a fixed, model-based BrainHacker benchmark—not live player data
+                    or a scientific population study.
+                    <a href="/player">View your Player page</a> or
+                    <a href="/stats">see the statistics</a>.
+                </p>
+                <div class="result-actions">
+                    <button class="primary-button" id="retryButton" type="button">Try again</button>
+                    <button class="secondary-button" id="resultMenuButton" type="button">Choose another test</button>
+                </div>
+            </section>
+        </div>
+
+        <p class="stage-footnote">
+            Three correct answers advance a level. Three misses end the run.
+        </p>
+    </article>
+</section>
+{% endblock %}
+
+{% block dialogs %}
+<dialog class="leaderboard-dialog" id="leaderboardDialog" aria-labelledby="leaderboardTitle">
+    <div class="dialog-header">
+        <div>
+            <p class="eyebrow">Saved records</p>
+            <h2 id="leaderboardTitle">Leaderboard</h2>
+        </div>
+        <button class="icon-button" id="closeLeaderboard" type="button" aria-label="Close leaderboard">×</button>
+    </div>
+
+    <div class="leaderboard-toolbar">
+        <label for="leaderboardFilter">Show scores for</label>
+        <select id="leaderboardFilter" name="leaderboard-filter">
+            <option value="all">All tests</option>
+        </select>
+    </div>
+
+    <div class="table-scroll" tabindex="0" aria-label="Leaderboard scores">
+        <table class="leaderboard-table">
+            <thead>
+                <tr>
+                    <th scope="col">Rank</th>
+                    <th scope="col">Player</th>
+                    <th scope="col">Test</th>
+                    <th scope="col">Score</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboardRows">
+                <tr class="empty-row">
+                    <td colspan="4">Complete a run to set the first score.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

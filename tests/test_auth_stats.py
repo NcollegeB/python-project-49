@@ -147,6 +147,34 @@ class AuthAndStatisticsTest(unittest.TestCase):
         })
         self.assertEqual(403, reserved.status_code)
 
+    def test_public_leaderboard_batches_account_name_resolution(self):
+        ada = self.accounts.create('Ada_1', 'correct-horse')
+        self.accounts.create('Grace', 'correct-horse')
+        self.store._leaderboard.record(
+            'account:{}'.format(ada['account_id']),
+            'even',
+            10,
+        )
+        self.store._leaderboard.record('GRACE', 'even', 9)
+        self.store._leaderboard.record('Visitor', 'even', 8)
+
+        with mock.patch.object(
+                self.accounts,
+                'lookup_many',
+                wraps=self.accounts.lookup_many,
+        ) as lookup_many:
+            response = self.client.get('/api/leaderboard?limit=100')
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, lookup_many.call_count)
+        self.assertEqual(
+            ['ada_1', 'Visitor'],
+            [
+                entry['player']
+                for entry in response.get_json()['entries']
+            ],
+        )
+
     def test_login_logout_and_invalid_credentials(self):
         self.accounts.create('Grace', 'correct-horse')
         token = csrf_token(self.client.get('/login'))

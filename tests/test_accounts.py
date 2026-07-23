@@ -132,6 +132,27 @@ class AccountStoreTest(unittest.TestCase):
         self.assertIsNone(self.accounts.get_by_id('owner'))
         self.assertIsNone(self.accounts.get_by_id(None))
 
+    def test_lookup_many_resolves_names_and_ids_from_one_file_read(self):
+        ada = self.accounts.create('Ada_1', 'correct horse')
+        grace = self.accounts.create('Grace', 'correct horse')
+
+        with mock.patch.object(
+                self.accounts,
+                '_load_accounts',
+                wraps=self.accounts._load_accounts,
+        ) as loader:
+            resolved = self.accounts.lookup_many(
+                usernames=('ADA_1', 'missing', 'not a username'),
+                account_ids=(grace['account_id'], 'invalid'),
+            )
+
+        self.assertEqual(1, loader.call_count)
+        self.assertEqual({'ada_1': ada}, resolved['by_username'])
+        self.assertEqual(
+            {grace['account_id']: grace},
+            resolved['by_id'],
+        )
+
     @unittest.skipUnless(os.name == 'posix', 'POSIX file modes only')
     def test_account_file_is_owner_readable_and_writable_only(self):
         self.accounts.create('Private_User', 'safe-password')

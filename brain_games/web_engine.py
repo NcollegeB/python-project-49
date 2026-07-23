@@ -220,17 +220,14 @@ class RunStore:
 
     def create(self, game_slug, player):
         """Create a run and return its first public round."""
-        slug = _normalise(game_slug)
-        if slug not in _CATALOG_BY_SLUG:
-            raise UnknownGameError(game_slug)
-        if not isinstance(player, str) or not player.strip():
-            raise ValueError('player must be a non-empty string')
-
-        clean_player = player.strip()[:MAX_PLAYER_LENGTH]
+        slug, clean_player = self._validated_run_owner(game_slug, player)
         with self._lock:
-            rng = self._random_factory()
-            self._validate_rng(rng)
-            state = _RunState(_new_id(), slug, clean_player, rng)
+            state = _RunState(
+                _new_id(),
+                slug,
+                clean_player,
+                self._new_rng(),
+            )
             state.round = self._make_round(state)
             self._make_room_for_run()
             self._runs[state.run_id] = state
@@ -240,66 +237,19 @@ class RunStore:
         """Grade one active round and return its result and next round."""
         with self._lock:
             state = self._get_run(run_id)
+            payload = self._answer_state(state, round_id, answer)
             if state.ended:
-                raise RunEndedError(run_id)
-
-            active_round = state.round
-            current_round_id = active_round['public']['round_id']
-            if round_id != current_round_id:
-                raise StaleRoundError(
-                    run_id,
-                    round_id,
-                    current_round_id,
-                )
-
-            submitted, canonical = self._validate_answer(
-                answer,
-                active_round,
-            )
-            expected = _normalise(active_round['expected_answer'])
-            correct = canonical == expected
-            if correct:
-                state.score += 1
-            else:
-                state.lives -= 1
-
-            self._record_source_result(
-                state,
-                active_round['source_slug'],
-                correct,
-            )
-            result = {
-                'round_id': current_round_id,
-                'correct': correct,
-                'submitted_answer': submitted,
-                'expected_answer': str(
-                    active_round['expected_answer'],
-                ),
-                'source_slug': active_round['source_slug'],
-            }
-
-            if state.lives <= 0:
-                state.ended = True
-                state.round = None
                 self._record_final_score(state)
-            else:
-                state.round = self._make_round(state)
-
-            payload = self._public_run(state)
-            payload['result'] = result
             return payload
 
     def quit(self, run_id):
         """End a run early; repeated calls remain safe and idempotent."""
         with self._lock:
             state = self._get_run(run_id)
-            if not state.ended:
-                state.ended = True
-                state.quit_early = True
-                state.round = None
+            payload = self._quit_state(state)
             if not state.recorded:
                 self._record_final_score(state)
-            return self._public_run(state)
+            return payload
 
     def leaders(self, game=None, limit=10, player=None):
         """Return leaderboard entries filtered by game or player."""
@@ -325,11 +275,88 @@ class RunStore:
         if any(not callable(getattr(rng, name, None)) for name in methods):
             raise TypeError('random_factory must return a random-like object')
 
+    @staticmethod
+    def _validated_run_owner(game_slug, player):
+        slug = _normalise(game_slug)
+        if slug not in _CATALOG_BY_SLUG:
+            raise UnknownGameError(game_slug)
+        if not isinstance(player, str) or not player.strip():
+            raise ValueError('player must be a non-empty string')
+        return slug, player.strip()[:MAX_PLAYER_LENGTH]
+
+    def _new_rng(self):
+        rng = self._random_factory()
+        self._validate_rng(rng)
+        return rng
+
     def _get_run(self, run_id):
         try:
             return self._runs[run_id]
         except (KeyError, TypeError):
             raise UnknownRunError(run_id)
+
+    def _answer_state(self, state, round_id, answer):
+        if state.ended:
+            raise RunEndedError(state.run_id)
+
+        active_round = state.round
+        current_round_id = active_round['public']['round_id']
+        if round_id != current_round_id:
+            raise StaleRoundError(
+                state.run_id,
+                round_id,
+                current_round_id,
+            )
+
+        submitted, canonical = self._validate_answer(
+            answer,
+            active_round,
+        )
+        correct = (
+            canonical == _normalise(active_round['expected_answer'])
+        )
+        if correct:
+            state.score += 1
+        else:
+            state.lives -= 1
+
+        self._record_source_result(
+            state,
+            active_round['source_slug'],
+            correct,
+        )
+        result = self._answer_result(
+            active_round,
+            current_round_id,
+            submitted,
+            correct,
+        )
+        if state.lives <= 0:
+            state.ended = True
+            state.round = None
+        else:
+            state.round = self._make_round(state)
+
+        payload = self._public_run(state)
+        payload['result'] = result
+        return payload
+
+    @staticmethod
+    def _answer_result(active_round, round_id, submitted, correct):
+        return {
+            'round_id': round_id,
+            'correct': correct,
+            'submitted_answer': submitted,
+            'expected_answer': str(active_round['expected_answer']),
+            'source_slug': active_round['source_slug'],
+        }
+
+    def _quit_state(self, state):
+        if not state.ended:
+            state.ended = True
+            state.quit_early = True
+            state.round = None
+        return self._public_run(state)
 
     def _record_final_score(self, state):
         if state.recorded:

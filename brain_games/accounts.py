@@ -101,6 +101,27 @@ def _valid_account_id(account_id: object) -> bool:
     return ACCOUNT_ID_PATTERN.fullmatch(account_id) is not None
 
 
+def _lookup_keys(usernames=(), account_ids=()):
+    """Return valid canonical keys for a batch account lookup."""
+    if isinstance(usernames, str):
+        usernames = (usernames,)
+    if isinstance(account_ids, str):
+        account_ids = (account_ids,)
+
+    canonical_usernames = set()
+    for username in usernames or ():
+        try:
+            canonical_usernames.add(normalize_username(username))
+        except AccountValidationError:
+            continue
+    valid_account_ids = {
+        account_id
+        for account_id in account_ids or ()
+        if _valid_account_id(account_id)
+    }
+    return canonical_usernames, valid_account_ids
+
+
 def _stored_text(value: Dict[str, object], field: str) -> Optional[str]:
     candidate = value.get(field)
     if not isinstance(candidate, str) or not candidate:
@@ -277,6 +298,34 @@ class AccountStore:
             if account['account_id'] == account_id:
                 return _public_account(account)
         return None
+
+    def lookup_many(self, usernames=(), account_ids=()):
+        """Resolve username and ID sets from one account-file read."""
+        username_keys, id_keys = _lookup_keys(usernames, account_ids)
+        if not username_keys and not id_keys:
+            return {'by_username': {}, 'by_id': {}}
+
+        accounts = self._load_accounts()
+        public_accounts = {
+            username: _public_account(account)
+            for username, account in accounts.items()
+            if username in username_keys or account['account_id'] in id_keys
+        }
+        return {
+            'by_username': {
+                username: public_accounts[username]
+                for username in username_keys
+                if username in public_accounts
+            },
+            'by_id': {
+                account['account_id']: public_accounts[username]
+                for username, account in accounts.items()
+                if all((
+                    account['account_id'] in id_keys,
+                    username in public_accounts,
+                ))
+            },
+        }
 
     def _load_accounts(self) -> Dict[str, Dict[str, str]]:
         accounts = {}

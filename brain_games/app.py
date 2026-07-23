@@ -22,6 +22,7 @@ from brain_games.accounts import DuplicateAccountError
 from brain_games.benchmarks import all_benchmarks
 from brain_games.benchmarks import benchmark_for
 from brain_games.benchmarks import UnknownBenchmarkError
+from brain_games.persistence import build_database_stores
 from brain_games.web_engine import InvalidAnswerError
 from brain_games.web_engine import GAME_CATALOG
 from brain_games.web_engine import RunEndedError
@@ -128,6 +129,49 @@ def _account_from_player(player):
         return None
     account_id = player[len(ACCOUNT_PLAYER_PREFIX):]
     return _accounts().get_by_id(account_id)
+
+
+def _lookup_accounts_many(usernames=(), account_ids=()):
+    accounts = _accounts()
+    lookup_many = getattr(accounts, 'lookup_many', None)
+    if callable(lookup_many):
+        return lookup_many(
+            usernames=usernames,
+            account_ids=account_ids,
+        )
+    return _lookup_accounts_individually(
+        accounts,
+        usernames,
+        account_ids,
+    )
+
+
+def _lookup_accounts_individually(accounts, usernames, account_ids):
+    return {
+        'by_username': _lookup_usernames_individually(accounts, usernames),
+        'by_id': _lookup_ids_individually(accounts, account_ids),
+    }
+
+
+def _lookup_usernames_individually(accounts, usernames):
+    by_username = {}
+    for username in usernames:
+        try:
+            account = accounts.get(username)
+        except AccountValidationError:
+            continue
+        if account is not None:
+            by_username[account['username']] = account
+    return by_username
+
+
+def _lookup_ids_individually(accounts, account_ids):
+    by_id = {}
+    for account_id in account_ids:
+        account = accounts.get_by_id(account_id)
+        if account is not None:
+            by_id[account['account_id']] = account
+    return by_id
 
 
 def _public_run(payload):
@@ -513,32 +557,55 @@ def _leaderboard_player(player):
 
 
 def _public_leaders(entries):
+    entries = list(entries)
+    usernames = set()
+    account_ids = set()
+    for entry in entries:
+        player = str(entry.get('player', ''))
+        if player.startswith(ACCOUNT_PLAYER_PREFIX):
+            account_ids.add(player[len(ACCOUNT_PLAYER_PREFIX):])
+        else:
+            usernames.add(player)
+    accounts = _lookup_accounts_many(
+        usernames=usernames,
+        account_ids=account_ids,
+    )
+
     public_entries = []
     for entry in entries:
-        public = _public_leader(entry)
+        public = _public_leader(entry, accounts)
         if public is not None:
             public_entries.append(public)
     return public_entries
 
 
-def _public_leader(entry):
+def _public_leader(entry, accounts):
     public = dict(entry)
     player = str(public.get('player', ''))
     if player.startswith(ACCOUNT_PLAYER_PREFIX):
-        account = _account_from_player(player)
+        account_id = player[len(ACCOUNT_PLAYER_PREFIX):]
+        account = accounts['by_id'].get(account_id)
         if account is None:
             return None
         public['player'] = account['username']
         return public
-    if _lookup_account(player) is not None:
+    if player.strip().casefold() in accounts['by_username']:
         return None
     return public
 
 
 def _secure_cookie_default():
-    return os.getenv('BRAIN_GAMES_SECURE_COOKIES', '').casefold() in {
+    configured = os.getenv(
+        'BRAIN_GAMES_SECURE_COOKIES',
+        '',
+    ).casefold() in {
         '1', 'true', 'yes', 'on',
     }
+    return _is_vercel() or configured
+
+
+def _is_vercel():
+    return bool(os.getenv('VERCEL'))
 
 
 def _secret_key():
@@ -550,6 +617,17 @@ def _secret_key():
             'BRAIN_GAMES_SECRET_KEY is required with secure cookies.',
         )
     return secrets.token_hex(32)
+
+
+def _default_web_stores():
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        return build_database_stores(database_url)
+    if _is_vercel():
+        raise RuntimeError(
+            'DATABASE_URL is required for durable Vercel storage.',
+        )
+    return RunStore(), AccountStore()
 
 
 def create_app(test_config=None, run_store=None, account_store=None):
@@ -567,11 +645,17 @@ def create_app(test_config=None, run_store=None, account_store=None):
     if test_config:
         application.config.update(test_config)
 
-    store = run_store or RunStore()
+    if run_store is None and account_store is None:
+        store, accounts = _default_web_stores()
+    else:
+        store = run_store if run_store is not None else RunStore()
+        accounts = (
+            account_store
+            if account_store is not None
+            else AccountStore()
+        )
     application.extensions['brain_games_run_store'] = store
-    application.extensions['brain_games_account_store'] = (
-        account_store or AccountStore()
-    )
+    application.extensions['brain_games_account_store'] = accounts
 
     for error_type in ERROR_STATUS:
         application.register_error_handler(

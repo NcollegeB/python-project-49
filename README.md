@@ -39,8 +39,8 @@ For a production-style local process, Gunicorn can serve the same app:
 poetry run gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 brain_games.app:app
 ```
 
-Use one worker because active browser runs are intentionally held in memory;
-accounts and best scores are file-backed and persistent.
+Without a database connection, use one worker because active browser runs are
+held in memory; accounts and best scores remain file-backed and persistent.
 
 ## Fixed averages and percentiles
 
@@ -74,11 +74,20 @@ export BRAIN_GAMES_SECRET_KEY='replace-with-a-long-random-secret'
 export BRAIN_GAMES_SECURE_COOKIES=1
 ```
 
-The current account and leaderboard backends use local files, which is useful
-for development and a single server with a persistent disk. Vercel Functions
-do not provide durable local filesystem storage; connect these stores to a
-managed database before the public Vercel deployment so logins and scores
-survive redeploys and scale across instances.
+`BRAIN_GAMES_SECRET_KEY` is required when the app runs on Vercel. Keep it
+stable across deployments so existing login sessions remain valid, and set
+`BRAIN_GAMES_SECURE_COOKIES=1` so session cookies are sent only over HTTPS.
+
+Set `DATABASE_URL` to a PostgreSQL connection string to store accounts, best
+scores, and live game runs durably in PostgreSQL. This lets gameplay continue
+across Vercel Function instances and deployments. The
+[Neon integration for Vercel](https://vercel.com/marketplace/neon/neon) is a
+recommended way to add managed PostgreSQL and provide the connection variable;
+connect it to the BrainHacker project before deploying.
+
+When `DATABASE_URL` is not set, local development keeps its original defaults:
+accounts and scores use files under `BRAIN_GAMES_DATA_DIR`, while active
+browser runs stay in memory.
 
 ## Games
 

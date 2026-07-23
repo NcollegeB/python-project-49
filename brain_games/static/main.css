@@ -1305,12 +1305,15 @@ kbd {
 }
 
 .feedback-region {
-    min-height: 45px;
+    height: 64px;
     margin-top: 14px;
     padding: 10px 12px;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
     border-left: 3px solid transparent;
     color: var(--muted);
     font-size: 0.8rem;
+    scrollbar-gutter: stable;
 }
 
 .feedback-region:empty {
@@ -1995,6 +1998,10 @@ kbd {
 
     .submit-answer {
         width: 100%;
+    }
+
+    .feedback-region {
+        height: 80px;
     }
 
     .result-scores {

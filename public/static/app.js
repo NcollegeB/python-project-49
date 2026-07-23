@@ -490,7 +490,8 @@ function cancelCountdownFrames() {
 }
 
 
-function clearCountdown() {
+function clearCountdown(options = {}) {
+    const preserveTimerSlot = options.preserveTimerSlot === true;
     const snapshot = {
         roundId: state.countdown.roundId,
         totalMs: state.countdown.totalMs,
@@ -505,8 +506,10 @@ function clearCountdown() {
     state.countdown.lowTimeAnnounced = false;
     state.countdown.renderedTenths = null;
     if (dom.roundTimer) {
-        dom.roundTimer.hidden = true;
-        dom.roundTimer.removeAttribute('data-low-time');
+        if (!preserveTimerSlot) {
+            dom.roundTimer.hidden = true;
+            dom.roundTimer.removeAttribute('data-low-time');
+        }
     }
     if (dom.timerAnnouncement) {
         dom.timerAnnouncement.textContent = '';
@@ -1650,7 +1653,7 @@ async function submitAnswer(answer, control = null, options = {}) {
 
     state.busy = true;
     clearPreviewTimer();
-    const countdownSnapshot = clearCountdown();
+    const countdownSnapshot = clearCountdown({preserveTimerSlot: true});
     const submittedControl = control;
     const runId = state.run.run_id;
     const roundId = state.round.round_id;

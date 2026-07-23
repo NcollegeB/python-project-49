@@ -226,6 +226,41 @@ class FrontendProgressionContractTest(unittest.TestCase):
         ):
             self.assertIn(source, self.stylesheet)
 
+    def test_answer_feedback_uses_fixed_slots_without_collapsing_timer(self):
+        feedback_rule = self.stylesheet.split(
+            '.feedback-region {',
+            1,
+        )[1].split('}', 1)[0]
+        for source in (
+                'height: 64px;',
+                'overflow-y: auto;',
+                'overflow-wrap: anywhere;',
+                'scrollbar-gutter: stable;',
+        ):
+            self.assertIn(source, feedback_rule)
+        self.assertNotIn('min-height:', feedback_rule)
+        mobile_styles = self.stylesheet.split(
+            '@media (max-width: 680px)',
+            1,
+        )[1]
+        self.assertIn(
+            '.feedback-region {\n        height: 80px;\n    }',
+            mobile_styles,
+        )
+        self.assertIn(
+            'const preserveTimerSlot = '
+            'options.preserveTimerSlot === true;',
+            self.javascript,
+        )
+        self.assertIn(
+            'clearCountdown({preserveTimerSlot: true})',
+            self.javascript,
+        )
+        self.assertIn(
+            'role="status" aria-live="polite" aria-atomic="true"',
+            self.template,
+        )
+
     def test_vercel_assets_match_local_assets(self):
         for name in ('app.js', 'main.css'):
             self.assertEqual(

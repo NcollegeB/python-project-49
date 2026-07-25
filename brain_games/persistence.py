@@ -44,6 +44,7 @@ from brain_games.web_engine import _RunState
 from brain_games.web_engine import MAX_LIVES
 from brain_games.web_engine import MAX_PLAYER_LENGTH
 from brain_games.web_engine import RunStore
+from brain_games.web_engine import RESTORABLE_TIMING_MODES
 from brain_games.web_engine import TIMING_MODES
 from brain_games.web_engine import UnknownRunError
 
@@ -555,7 +556,7 @@ def _snapshot_recent_content_is_valid(recent_content):
 
 
 def _snapshot_misc_fields_are_valid(payload):
-    if payload['timing_mode'] not in TIMING_MODES:
+    if payload['timing_mode'] not in RESTORABLE_TIMING_MODES:
         return False
     if payload['ranked'] and payload['timing_mode'] != 'standard':
         return False
@@ -647,6 +648,7 @@ class PostgresRunStore(RunStore):
             player,
             ranked=True,
             timing_mode='standard',
+            start_level=1,
     ):
         """Create and persist a new browser run."""
         slug, clean_player = self._validated_run_owner(game_slug, player)
@@ -657,7 +659,12 @@ class PostgresRunStore(RunStore):
         clean_timing_mode = timing_mode.strip().casefold()
         if clean_timing_mode not in TIMING_MODES:
             raise ValueError('timing_mode is not supported')
-        ranked = ranked and clean_timing_mode == 'standard'
+        self._validate_start_level(slug, start_level)
+        ranked = all((
+            ranked,
+            clean_timing_mode == 'standard',
+            start_level == 1,
+        ))
         state = _RunState(
             secrets.token_hex(16),
             slug,
@@ -666,6 +673,7 @@ class PostgresRunStore(RunStore):
             ranked,
             clean_timing_mode,
         )
+        state.level = start_level
         state.round = self._make_round(state)
         now = _utc_now()
         with self.engine.begin() as connection:

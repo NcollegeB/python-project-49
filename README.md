@@ -50,12 +50,14 @@ held in memory; accounts and best scores remain file-backed and persistent.
 
 ## Levels, timing, averages, and percentiles
 
-Browser games offer three timing modes before a run: Standard, Relaxed, and
-Self-paced. Standard uses the published game clock and is eligible for saved
-scores. Relaxed doubles answer deadlines, while Self-paced removes answer
-deadlines; both remain available for accessible practice without entering the
-ranked score table. Number Memory still uses its intentional preview phase in
-every mode.
+Before a run, the level selector can open any authored difficulty directly.
+Starting above Level 1 creates an unranked practice run; normal progression
+continues from the selected level.
+
+Browser games offer two timing modes: Regular and Relaxed. Regular uses the
+published game clock and is eligible for saved scores when starting at Level
+1. Relaxed removes answer deadlines and always creates an unranked practice
+run. Number Memory still uses its intentional preview phase in both modes.
 
 BrainHacker does not use the live leaderboard to calculate statistics. Every
 game has one fixed reference round-accuracy assumption for each configured

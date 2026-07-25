@@ -50,7 +50,8 @@ DEFAULT_MAX_RUNS = 512
 MAX_PLAYER_LENGTH = 64
 SCORE_RULESET = 'r4'
 SCORE_GAME_PREFIX = '{}:'.format(SCORE_RULESET)
-TIMING_MODES = ('standard', 'relaxed', 'self-paced')
+TIMING_MODES = ('standard', 'self-paced')
+RESTORABLE_TIMING_MODES = TIMING_MODES + ('relaxed',)
 RECENT_CONTENT_LIMIT = 4
 ROUND_GENERATION_ATTEMPTS = 8
 
@@ -745,6 +746,7 @@ class RunStore:
             player,
             ranked=True,
             timing_mode='standard',
+            start_level=1,
     ):
         """Create a run and return its first public round."""
         slug, clean_player = self._validated_run_owner(game_slug, player)
@@ -759,7 +761,12 @@ class RunStore:
                     ', '.join(TIMING_MODES),
                 ),
             )
-        ranked = ranked and clean_timing_mode == 'standard'
+        self._validate_start_level(slug, start_level)
+        ranked = all((
+            ranked,
+            clean_timing_mode == 'standard',
+            start_level == 1,
+        ))
         with self._lock:
             state = _RunState(
                 _new_id(),
@@ -769,6 +776,7 @@ class RunStore:
                 ranked,
                 clean_timing_mode,
             )
+            state.level = start_level
             state.round = self._make_round(state)
             self._make_room_for_run()
             self._runs[state.run_id] = state
@@ -856,6 +864,16 @@ class RunStore:
             return self._runs[run_id]
         except (KeyError, TypeError):
             raise UnknownRunError(run_id)
+
+    @staticmethod
+    def _validate_start_level(game_slug, start_level):
+        if isinstance(start_level, bool) or not isinstance(start_level, int):
+            raise TypeError('start_level must be an integer')
+        max_level = max_level_for(game_slug)
+        if not 1 <= start_level <= max_level:
+            raise ValueError(
+                'start_level must be between 1 and {}'.format(max_level),
+            )
 
     def _answer_state(self, state, round_id, answer):
         if state.ended:

@@ -113,6 +113,7 @@ const state = {
         renderedTenths: null,
     },
     startSequence: 0,
+    startLevel: 1,
     navigating: false,
     personalBests: new Map(),
     benchmarks: new Map(),
@@ -144,6 +145,7 @@ function cacheDom() {
         'levelProgress', 'roundValue',
         'cycleTrack', 'briefingState', 'activeState', 'resultState',
         'briefingIcon', 'briefingTitle', 'briefingDescription',
+        'levelSelector', 'levelOptions', 'practiceLevelNote',
         'timingMode', 'startRunButton', 'roundSource', 'difficultyLabel',
         'roundPrompt', 'roundTimer', 'timerText', 'timerProgress',
         'timerAnnouncement', 'roundVisual',
@@ -358,8 +360,88 @@ function selectedTimingMode() {
 }
 
 
-function setTimingControlsDisabled(disabled) {
+function selectedStartLevel() {
+    const configuredMaxLevel = Number(state.selected?.max_level || 5);
+    const maxLevel = Number.isFinite(configuredMaxLevel)
+        ? Math.max(1, Math.round(configuredMaxLevel))
+        : 5;
+    return Math.max(
+        1,
+        Math.min(maxLevel, Math.round(Number(state.startLevel) || 1)),
+    );
+}
+
+
+function updatePracticeLevelNote(maxLevel) {
+    const startLevel = selectedStartLevel();
+    const isPractice = (
+        startLevel > 1
+        || selectedTimingMode() !== 'standard'
+    );
+    if (dom.practiceLevelNote) {
+        dom.practiceLevelNote.textContent = isPractice
+            ? 'Practice — scores are not saved.'
+            : 'Level 1 starts a full ranked test.';
+        dom.practiceLevelNote.dataset.practice = String(isPractice);
+    }
+    if (dom.levelValue) {
+        dom.levelValue.textContent = `${startLevel}/${maxLevel}`;
+        dom.levelValue.setAttribute(
+            'aria-label',
+            `Level ${startLevel} of ${maxLevel}`,
+        );
+    }
+    if (dom.runStatus) {
+        dom.runStatus.textContent = isPractice
+            ? 'Practice setup'
+            : 'Test setup';
+    }
+}
+
+
+function renderLevelSelector(maxLevel) {
+    state.startLevel = 1;
+    if (!dom.levelOptions) {
+        return;
+    }
+    dom.levelOptions.replaceChildren();
+    dom.levelOptions.dataset.count = String(maxLevel);
+    for (let level = 1; level <= maxLevel; level += 1) {
+        const option = document.createElement('label');
+        option.className = 'level-option';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'start-level';
+        input.value = String(level);
+        input.checked = level === 1;
+        input.setAttribute(
+            'aria-label',
+            `Start at level ${level} of ${maxLevel}`,
+        );
+        const number = createTextElement(
+            'span',
+            'level-option__number',
+            String(level),
+        );
+        input.addEventListener('change', () => {
+            if (!input.checked) {
+                return;
+            }
+            state.startLevel = level;
+            updatePracticeLevelNote(maxLevel);
+        });
+        option.append(input, number);
+        dom.levelOptions.append(option);
+    }
+    updatePracticeLevelNote(maxLevel);
+}
+
+
+function setBriefingControlsDisabled(disabled) {
     dom.timingMode?.querySelectorAll('input').forEach((input) => {
+        input.disabled = disabled;
+    });
+    dom.levelSelector?.querySelectorAll('input').forEach((input) => {
         input.disabled = disabled;
     });
 }
@@ -397,7 +479,6 @@ function openBriefing(slug, options = {}) {
     dom.briefingDescription.textContent = game.description || game.rules;
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
-    dom.runStatus.textContent = 'Test setup';
     updateHud({
         score: 0,
         lives: 3,
@@ -407,9 +488,10 @@ function openBriefing(slug, options = {}) {
         level_goal: 3,
         max_level: maxLevel,
     });
+    renderLevelSelector(maxLevel);
     dom.roundValue.textContent = 'Ready';
     dom.cycleTrack.replaceChildren();
-    setTimingControlsDisabled(false);
+    setBriefingControlsDisabled(false);
     setFeedback('', 'neutral');
     if (!options.fromHistory) {
         updateHistory(slug, options.replaceHistory);
@@ -890,11 +972,12 @@ async function startRun() {
     clearCountdown();
     const selectedSlug = state.selected.slug;
     const timingMode = selectedTimingMode();
+    const startLevel = selectedStartLevel();
     const requestSequence = state.startSequence + 1;
     state.startSequence = requestSequence;
     state.busy = true;
     dom.startRunButton.disabled = true;
-    setTimingControlsDisabled(true);
+    setBriefingControlsDisabled(true);
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
     audio.unlock();
@@ -906,6 +989,7 @@ async function startRun() {
                 game: state.selected.slug,
                 player: currentPlayerName(),
                 timing_mode: timingMode,
+                start_level: startLevel,
             }),
         });
         const createdRun = unwrapRun(payload);
@@ -940,7 +1024,7 @@ async function startRun() {
         if (requestSequence === state.startSequence) {
             state.busy = false;
             dom.startRunButton.disabled = false;
-            setTimingControlsDisabled(false);
+            setBriefingControlsDisabled(false);
         }
     }
 }
@@ -2621,9 +2705,13 @@ async function finishRun(result) {
     dom.runStatus.textContent = 'Test complete';
     showState('result');
     dom.resultScore.textContent = String(score);
-    dom.resultBest.textContent = isBest
-        ? `${score} NEW`
-        : String(previousBest ?? '—');
+    dom.resultBest.textContent = ranked
+        ? (
+            isBest
+                ? `${score} NEW`
+                : String(previousBest ?? '—')
+        )
+        : 'Not saved';
     dom.resultBest.dataset.best = String(isBest);
     const remainingLives = Math.max(
         0,
@@ -2647,15 +2735,11 @@ async function finishRun(result) {
     dom.resultMessage.textContent = ranked
         ? resultMessage
         : `${resultMessage} Practice scores are not ranked.`;
-    if (dom.resultAverage) {
-        dom.resultAverage.textContent = '…';
-    }
-    if (dom.resultPercentile) {
-        dom.resultPercentile.textContent = '…';
-    }
-    if (dom.resultRank) {
-        dom.resultRank.textContent = '…';
-    }
+    [dom.resultAverage, dom.resultPercentile, dom.resultRank]
+        .filter(Boolean)
+        .forEach((element) => {
+            element.textContent = ranked ? '…' : '—';
+        });
     if (isBest) {
         audio.cue('best');
     } else {
@@ -2666,10 +2750,15 @@ async function finishRun(result) {
             dom.retryButton?.focus();
         }
     }, 0);
-    await Promise.all([
+    const resultRequests = [
         refreshPersonalBests({shouldApply: resultIsCurrent}),
-        refreshResultBenchmark(completedGame, score, resultIsCurrent),
-    ]);
+    ];
+    if (ranked) {
+        resultRequests.push(
+            refreshResultBenchmark(completedGame, score, resultIsCurrent),
+        );
+    }
+    await Promise.all(resultRequests);
 }
 
 
@@ -2933,6 +3022,13 @@ function closeLeaderboard() {
 function bindEvents() {
     dom.startRunButton?.addEventListener('click', startRun);
     dom.retryButton?.addEventListener('click', startRun);
+    dom.timingMode?.addEventListener('change', () => {
+        const configuredMaxLevel = Number(state.selected?.max_level || 5);
+        const maxLevel = Number.isFinite(configuredMaxLevel)
+            ? Math.max(1, Math.round(configuredMaxLevel))
+            : 5;
+        updatePracticeLevelNote(maxLevel);
+    });
     dom.reviewContinue?.addEventListener('click', () => {
         advanceAnswerTransition({manual: true});
     });

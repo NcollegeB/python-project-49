@@ -270,6 +270,51 @@ class DatabasePersistenceTest(unittest.TestCase):
         self.assertEqual([], self.leaderboard.top(player='practice'))
         self.assertEqual([], self.first.leaders(player='practice'))
 
+    def test_selected_practice_level_persists_and_never_records(self):
+        started = self.first.create(
+            'even',
+            'LevelPractice',
+            start_level=4,
+        )
+        with self.engine.begin() as connection:
+            persisted = self.second._locked_state(
+                connection,
+                started['run_id'],
+            )
+        restored = self.second.quit(started['run_id'])
+
+        self.assertEqual(4, started['level'])
+        self.assertEqual(4, started['round']['level'])
+        self.assertEqual(4, persisted.level)
+        self.assertFalse(persisted.ranked)
+        self.assertEqual(4, restored['level'])
+        self.assertFalse(started['ranked'])
+        self.assertFalse(restored['ranked'])
+        self.assertEqual(
+            [],
+            self.leaderboard.top(player='levelpractice'),
+        )
+
+    def test_database_store_rejects_removed_timing_and_bad_levels(self):
+        with self.assertRaises(ValueError):
+            self.first.create(
+                'even',
+                'Practice',
+                timing_mode='relaxed',
+            )
+        with self.assertRaises(ValueError):
+            self.first.create(
+                'even',
+                'Practice',
+                start_level=6,
+            )
+        with self.assertRaises(TypeError):
+            self.first.create(
+                'even',
+                'Practice',
+                start_level=True,
+            )
+
     def test_ranked_database_score_uses_current_ruleset_privately(self):
         started = self.first.create('prime', 'Current')
         self.second.quit(started['run_id'])
@@ -298,7 +343,7 @@ class RunSnapshotTest(unittest.TestCase):
             'verbal-memory',
             'Ada',
             ranked=False,
-            timing_mode='relaxed',
+            timing_mode='self-paced',
         )
         state = store._runs[run['run_id']]
         state.level = 4
@@ -333,6 +378,23 @@ class RunSnapshotTest(unittest.TestCase):
         self.assertEqual(state.content_bags, restored.content_bags)
         self.assertEqual(state.recent_content, restored.recent_content)
         self.assertEqual(expected_next_random, restored.rng.random())
+
+    def test_legacy_relaxed_snapshot_loads_and_keeps_double_time(self):
+        store = RunStore(random_factory=lambda: random.Random(8))
+        run = store.create('calc', 'Ada')
+        snapshot = serialize_run_state(store._runs[run['run_id']])
+        snapshot['ranked'] = False
+        snapshot['timing_mode'] = 'relaxed'
+
+        restored = deserialize_run_state(snapshot, random.Random(9))
+        restored.round = store._make_round(restored)
+
+        self.assertFalse(restored.ranked)
+        self.assertEqual('relaxed', restored.timing_mode)
+        self.assertEqual(
+            16000,
+            restored.round['public']['time_limit_ms'],
+        )
 
     def test_snapshot_version_and_progress_are_strictly_validated(self):
         store = RunStore(random_factory=lambda: random.Random(8))

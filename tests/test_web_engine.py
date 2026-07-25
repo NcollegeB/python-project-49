@@ -957,16 +957,72 @@ class LevelProgressionTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.store.create('even', 'Ada', ranked='yes')
 
-    def test_timing_modes_scale_only_the_answer_window(self):
+    def test_selected_start_level_is_exact_and_always_unranked(self):
+        practice = self.store.create(
+            'calc',
+            'Practice',
+            start_level=4,
+        )
+
+        self.assertEqual(4, practice['level'])
+        self.assertEqual(4, practice['round']['level'])
+        self.assertEqual(4, practice['round']['source_level'])
+        self.assertEqual('Advanced', practice['round']['difficulty_label'])
+        self.assertFalse(practice['ranked'])
+
+        latest = practice
+        for _correct in range(3):
+            latest = self.store.answer(
+                latest['run_id'],
+                latest['round']['round_id'],
+                expected_answer(self.store, latest['run_id']),
+            )
+        self.assertEqual(5, latest['level'])
+        self.store.quit(latest['run_id'])
+        self.assertEqual([], self.board.records)
+
+    def test_level_one_remains_ranked_and_extended_games_start_at_ten(self):
+        ranked = self.store.create('even', 'Ranked', start_level=1)
+        spatial = self.store.create(
+            'direction-focus',
+            'Spatial',
+            start_level=10,
+        )
+
+        self.assertTrue(ranked['ranked'])
+        self.assertEqual(1, ranked['level'])
+        self.assertFalse(spatial['ranked'])
+        self.assertEqual(10, spatial['level'])
+        self.assertEqual(10, spatial['round']['source_level'])
+        self.assertEqual('Extreme', spatial['round']['difficulty_label'])
+
+    def test_start_level_must_be_an_integer_in_the_game_range(self):
+        for invalid in (None, True, False, 1.0, '2'):
+            with self.subTest(start_level=invalid):
+                with self.assertRaises(TypeError):
+                    self.store.create(
+                        'even',
+                        'Ada',
+                        start_level=invalid,
+                    )
+
+        for slug, invalid in (
+                ('even', 0),
+                ('even', 6),
+                ('direction-focus', 11)):
+            with self.subTest(game=slug, start_level=invalid):
+                with self.assertRaises(ValueError):
+                    self.store.create(
+                        slug,
+                        'Ada',
+                        start_level=invalid,
+                    )
+
+    def test_supported_timing_modes_change_only_the_answer_window(self):
         standard = self.store.create(
             'calc',
             'Standard',
             timing_mode='standard',
-        )
-        relaxed = self.store.create(
-            'calc',
-            'Relaxed',
-            timing_mode=' RELAXED ',
         )
         self_paced = self.store.create(
             'calc',
@@ -975,11 +1031,8 @@ class LevelProgressionTest(unittest.TestCase):
         )
 
         self.assertEqual(8000, standard['round']['time_limit_ms'])
-        self.assertEqual(16000, relaxed['round']['time_limit_ms'])
         self.assertEqual(0, self_paced['round']['time_limit_ms'])
-        self.assertEqual('relaxed', relaxed['timing_mode'])
         self.assertEqual('self-paced', self_paced['timing_mode'])
-        self.assertFalse(relaxed['ranked'])
         self.assertFalse(self_paced['ranked'])
 
         memory = self.store.create(
@@ -993,8 +1046,14 @@ class LevelProgressionTest(unittest.TestCase):
     def test_timing_mode_must_be_supported(self):
         with self.assertRaises(TypeError):
             self.store.create('even', 'Ada', timing_mode=None)
-        with self.assertRaises(ValueError):
-            self.store.create('even', 'Ada', timing_mode='turbo')
+        for invalid in ('relaxed', 'turbo'):
+            with self.subTest(timing_mode=invalid):
+                with self.assertRaises(ValueError):
+                    self.store.create(
+                        'even',
+                        'Ada',
+                        timing_mode=invalid,
+                    )
 
 
 class DifficultyGeneratorTest(unittest.TestCase):

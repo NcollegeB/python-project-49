@@ -24,21 +24,76 @@ class FrontendProgressionContractTest(unittest.TestCase):
             PROJECT_ROOT / 'brain_games' / 'templates' / 'index.html'
         ).read_text(encoding='utf-8')
 
-    def test_timing_modes_and_level_hud_are_present(self):
-        for mode in ('standard', 'relaxed', 'self-paced'):
+    def test_timing_modes_and_level_practice_selector_are_present(self):
+        for mode in ('standard', 'self-paced'):
             self.assertIn('value="{}"'.format(mode), self.template)
+        self.assertNotIn('value="relaxed"', self.template)
+        self.assertIn('>Regular</span>', self.template)
+        self.assertIn('>Relaxed</span>', self.template)
+        self.assertNotIn('2× answer time', self.template)
         for element_id in (
                 'levelValue',
                 'levelProgress',
                 'difficultyLabel',
                 'roundTimer',
                 'timerProgress',
+                'levelSelector',
+                'levelOptions',
+                'practiceLevelNote',
         ):
             self.assertIn('id="{}"'.format(element_id), self.template)
         self.assertIn('name="timing-mode"', self.template)
         self.assertIn('timing_mode: timingMode', self.javascript)
-        self.assertIn('Relaxed · 2× answer time', self.template)
-        self.assertIn('Self-paced · No answer deadline', self.template)
+        self.assertIn('start_level: startLevel', self.javascript)
+        self.assertIn('function renderLevelSelector(maxLevel)', self.javascript)
+        self.assertIn('state.startLevel = 1;', self.javascript)
+        self.assertIn(
+            "'Practice — scores are not saved.'",
+            self.javascript,
+        )
+        self.assertIn("input.name = 'start-level';", self.javascript)
+        self.assertIn(
+            '`Start at level ${level} of ${maxLevel}`',
+            self.javascript,
+        )
+        self.assertIn('min-height: 46px;', self.stylesheet)
+        self.assertIn(
+            'grid-template-columns: repeat(5, minmax(44px, 1fr));',
+            self.stylesheet,
+        )
+        self.assertIn(
+            "selectedTimingMode() !== 'standard'",
+            self.javascript,
+        )
+
+    def test_practice_results_are_not_saved_or_benchmarked(self):
+        finish_block = self.javascript.split(
+            'async function finishRun',
+            1,
+        )[1].split(
+            'function ordinal',
+            1,
+        )[0]
+        self.assertIn(
+            ": 'Not saved';",
+            finish_block,
+        )
+        self.assertIn(
+            "element.textContent = ranked ? '…' : '—';",
+            finish_block,
+        )
+        self.assertIn('if (ranked) {', finish_block)
+        self.assertIn(
+            'refreshResultBenchmark(completedGame, score, resultIsCurrent)',
+            finish_block,
+        )
+        self.assertLess(
+            finish_block.index('if (ranked) {'),
+            finish_block.index(
+                'refreshResultBenchmark('
+                'completedGame, score, resultIsCurrent)',
+            ),
+        )
 
     def test_answer_acknowledgement_and_timeout_are_race_guarded(self):
         self.assertIn(

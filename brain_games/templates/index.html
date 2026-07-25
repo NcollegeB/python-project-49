@@ -196,7 +196,9 @@
 {% endblock %}
 
 {% block dialogs %}
-<dialog class="leaderboard-dialog" id="leaderboardDialog" aria-labelledby="leaderboardTitle">
+<dialog class="leaderboard-dialog" id="leaderboardDialog"
+        aria-labelledby="leaderboardTitle"
+        google-side-rail-overlap="false">
     <div class="dialog-header">
         <div>
             <p class="eyebrow">Saved records</p>
@@ -233,5 +235,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+<script nonce="{{ csp_nonce }}" type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

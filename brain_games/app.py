@@ -1,6 +1,7 @@
 """Flask application for the BrainHacker web interface."""
 
 import os
+import re
 import secrets
 from datetime import timedelta
 
@@ -8,10 +9,12 @@ from flask import Blueprint
 from flask import abort
 from flask import current_app
 from flask import Flask
+from flask import g
 from flask import jsonify
 from flask import redirect
 from flask import render_template
 from flask import request
+from flask import Response
 from flask import session
 from flask import url_for
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -47,6 +50,9 @@ CATALOG_BY_SLUG = {game['slug']: game for game in GAME_CATALOG}
 SESSION_USER_KEY = 'brainhacker_username'
 CSRF_SESSION_KEY = 'brainhacker_csrf_token'
 ACCOUNT_PLAYER_PREFIX = 'account:'
+ADSENSE_CLIENT_ENV = 'BRAIN_GAMES_ADSENSE_CLIENT'
+ADSENSE_CLIENT_PATTERN = re.compile(r'\Aca-pub-\d{16}\Z')
+MONETIZED_ENDPOINTS = frozenset({'brain_games.index'})
 
 CSP = '; '.join((
     "default-src 'self'",
@@ -61,6 +67,15 @@ CSP = '; '.join((
     "frame-ancestors 'none'",
     "form-action 'self'",
 ))
+
+ADSENSE_CSP = (
+    "object-src 'none'; "
+    "script-src 'nonce-{nonce}' 'unsafe-inline' 'unsafe-eval' "
+    "'strict-dynamic' https: http:; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'"
+)
 
 routes = Blueprint('brain_games', __name__)
 
@@ -247,11 +262,49 @@ def _handle_request_too_large(error):
     return error
 
 
+def _validated_adsense_client(value):
+    if value in (None, ''):
+        return None
+    if not isinstance(value, str) or not ADSENSE_CLIENT_PATTERN.fullmatch(
+        value,
+    ):
+        raise RuntimeError(
+            '{} must use the form ca-pub- followed by 16 digits.'.format(
+                ADSENSE_CLIENT_ENV,
+            ),
+        )
+    return value
+
+
+def _adsense_client_for_request():
+    if request.endpoint not in MONETIZED_ENDPOINTS:
+        return None
+    return current_app.config.get('ADSENSE_CLIENT')
+
+
+def _csp_nonce():
+    nonce = getattr(g, 'brainhacker_csp_nonce', None)
+    if nonce is None:
+        nonce = secrets.token_urlsafe(24)
+        g.brainhacker_csp_nonce = nonce
+    return nonce
+
+
 def _add_browser_headers(response):
-    response.headers['Content-Security-Policy'] = CSP
+    adsense_client = _adsense_client_for_request()
+    adsense_active = response.status_code < 400 and adsense_client is not None
+    response.headers['Content-Security-Policy'] = (
+        ADSENSE_CSP.format(nonce=_csp_nonce())
+        if adsense_active
+        else CSP
+    )
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Referrer-Policy'] = (
+        'strict-origin-when-cross-origin'
+        if adsense_active
+        else 'no-referrer'
+    )
     response.headers['Permissions-Policy'] = (
         'camera=(), geolocation=(), microphone=()'
     )
@@ -270,6 +323,8 @@ def _add_browser_headers(response):
 @routes.app_context_processor
 def _template_context():
     return {
+        'adsense_client': _adsense_client_for_request(),
+        'csp_nonce': _csp_nonce(),
         'current_user': _current_user(),
         'csrf_token': _csrf_token(),
     }
@@ -291,6 +346,25 @@ def statistics():
         'stats.html',
         benchmarks=rows,
         personal_stats=rows,
+    )
+
+
+@routes.get('/privacy')
+def privacy():
+    return render_template('privacy.html')
+
+
+@routes.get('/ads.txt')
+def ads_txt():
+    client = current_app.config.get('ADSENSE_CLIENT')
+    if client is None:
+        abort(404)
+    publisher_id = client.removeprefix('ca-')
+    return Response(
+        'google.com, {}, DIRECT, f08c47fec0942fa0\n'.format(
+            publisher_id,
+        ),
+        content_type='text/plain; charset=utf-8',
     )
 
 
@@ -673,6 +747,7 @@ def create_app(test_config=None, run_store=None, account_store=None):
     """Build the BrainHacker web application."""
     application = Flask(__name__)
     application.config.from_mapping(
+        ADSENSE_CLIENT=os.getenv(ADSENSE_CLIENT_ENV),
         JSON_SORT_KEYS=False,
         MAX_CONTENT_LENGTH=16 * 1024,
         PERMANENT_SESSION_LIFETIME=timedelta(days=30),
@@ -683,6 +758,9 @@ def create_app(test_config=None, run_store=None, account_store=None):
     )
     if test_config:
         application.config.update(test_config)
+    application.config['ADSENSE_CLIENT'] = _validated_adsense_client(
+        application.config.get('ADSENSE_CLIENT'),
+    )
 
     if run_store is None and account_store is None:
         store, accounts = _default_web_stores()

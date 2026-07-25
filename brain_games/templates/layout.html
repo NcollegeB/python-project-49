@@ -7,16 +7,25 @@
     <meta name="color-scheme" content="light">
     <meta name="description" content="BrainHacker is a collection of focused brain games with saved personal bests and fixed benchmarks.">
     <title>{% block title %}BrainHacker{% endblock %}</title>
-    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    {% if adsense_client %}
+        <script
+            nonce="{{ csp_nonce }}"
+            async
+            src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={{ adsense_client|e }}"
+            crossorigin="anonymous"
+        ></script>
+    {% endif %}
+    <script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='theme.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body
     data-initial-game="{{ initial_game|default('', true)|e }}"
     data-current-user="{% if current_user %}{{ current_user.username|default(current_user, true)|e }}{% endif %}"
 >
-    <a class="skip-link" href="#mainContent">Skip to content</a>
+    <a class="skip-link" href="#mainContent"
+       google-side-rail-overlap="false">Skip to content</a>
 
-    <div class="app-shell">
+    <div class="app-shell" google-side-rail-overlap="false">
         <header class="site-header">
             <a class="brand" href="/" aria-label="BrainHacker home">
                 <span class="brand-monogram" aria-hidden="true">BH</span>
@@ -63,7 +72,10 @@
 
         <footer class="site-footer">
             <p><strong>BrainHacker</strong></p>
-            <p>Benchmarks are fixed and model-based, never calculated from live players.</p>
+            <p>
+                Benchmarks are fixed and model-based, never calculated from
+                live players. <a href="/privacy">Privacy</a>
+            </p>
         </footer>
     </div>
 

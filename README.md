@@ -23,8 +23,9 @@ the same stable references for all eleven tests and, when signed in, compares
 them with the account's saved bests.
 
 Sound cues are synthesized locally with the Web Audio API and can be muted
-from the header. The interface does not download fonts, media, trackers, or
-other third-party assets.
+from the header. Fonts and media remain local. When advertising is configured,
+game pages load Google AdSense; other pages remain free of third-party ad
+code.
 
 Install the project and start the development server:
 
@@ -97,6 +98,30 @@ connect it to the BrainHacker project before deploying.
 When `DATABASE_URL` is not set, local development keeps its original defaults:
 accounts and scores use files under `BRAIN_GAMES_DATA_DIR`, while active
 browser runs stay in memory.
+
+## Advertising
+
+BrainHacker supports Google AdSense Auto ads on game pages. Set the public
+publisher identifier to enable the AdSense loader:
+
+```console
+export BRAIN_GAMES_ADSENSE_CLIENT='ca-pub-1234567890123456'
+```
+
+The value must be the real 16-digit publisher identifier from the site's
+AdSense account. When it is absent, BrainHacker does not load Google ad code.
+When present, `/ads.txt` publishes the matching authorized-seller record.
+
+After Google approves the site, open its AdSense Auto ads settings, enable
+**Side rail ads**, open **Overlay formats → Advanced settings**, select
+**Left and right**, and disable in-page, anchor, and vignette formats if the
+site should show only the two side rails. Side rails appear only when Google
+finds enough room on a desktop screen; they do not squeeze the game layout on
+smaller screens.
+
+On Vercel, scope `BRAIN_GAMES_ADSENSE_CLIENT` to Production so preview
+domains remain ad-free. Before enabling it, publish the appropriate European
+and US-state consent messages under **Privacy & messaging**.
 
 ## Games
 

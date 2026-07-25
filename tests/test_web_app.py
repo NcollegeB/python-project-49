@@ -1,11 +1,13 @@
 import importlib
 import os
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from brain_games import app as app_module
+from brain_games.app import CSP
 from brain_games.app import create_app
 from brain_games.leaderboard import Leaderboard
 from brain_games.web_engine import RunStore
@@ -101,6 +103,110 @@ class WebAppTest(unittest.TestCase):
         self.assertNotIn("'unsafe-inline'", response.headers[
             'Content-Security-Policy'
         ])
+
+    def test_adsense_side_rails_are_opt_in_and_game_page_only(self):
+        publisher_id = 'ca-pub-1234567890123456'
+        application = create_app(
+            {
+                'ADSENSE_CLIENT': publisher_id,
+                'TESTING': True,
+            },
+            run_store=self.store,
+        )
+        client = application.test_client()
+
+        game_page = client.get('/')
+        game_document = game_page.get_data(as_text=True)
+        direct_game = client.get('/play/even')
+        privacy_page = client.get('/privacy')
+        privacy_document = privacy_page.get_data(as_text=True)
+        ads_txt = client.get('/ads.txt')
+
+        self.assertIn(
+            'pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'
+            '?client={}'.format(publisher_id),
+            game_document,
+        )
+        self.assertEqual(1, game_document.count('adsbygoogle.js'))
+        self.assertIn('google-side-rail-overlap="false"', game_document)
+        script_nonces = re.findall(
+            r'<script\b[^>]*\bnonce="([^"]+)"',
+            game_document,
+        )
+        self.assertEqual(3, len(script_nonces))
+        self.assertEqual(1, len(set(script_nonces)))
+        nonce = script_nonces[0]
+        self.assertIn(
+            "'nonce-{}'".format(nonce),
+            game_page.headers['Content-Security-Policy'],
+        )
+        self.assertIn("'strict-dynamic'", game_page.headers[
+            'Content-Security-Policy'
+        ])
+        self.assertIn("'unsafe-eval'", game_page.headers[
+            'Content-Security-Policy'
+        ])
+        self.assertEqual(
+            'strict-origin-when-cross-origin',
+            game_page.headers['Referrer-Policy'],
+        )
+        self.assertIn('adsbygoogle.js', direct_game.get_data(as_text=True))
+        self.assertIn("'strict-dynamic'", direct_game.headers[
+            'Content-Security-Policy'
+        ])
+        self.assertIn('How BrainHacker uses data', privacy_document)
+        self.assertIn('Google-certified vendors', privacy_document)
+        self.assertIn('adssettings.google.com', privacy_document)
+        self.assertIn('optout.aboutads.info', privacy_document)
+        self.assertEqual(200, privacy_page.status_code)
+        for path in (
+            '/login',
+            '/register',
+            '/stats',
+            '/player',
+            '/privacy',
+            '/api/games',
+            '/healthz',
+            '/play/not-a-game',
+        ):
+            response = client.get(path)
+            self.assertNotIn(
+                'adsbygoogle.js',
+                response.get_data(as_text=True),
+                path,
+            )
+            self.assertEqual(
+                CSP,
+                response.headers['Content-Security-Policy'],
+                path,
+            )
+            self.assertEqual(
+                'no-referrer',
+                response.headers['Referrer-Policy'],
+                path,
+            )
+        self.assertEqual(200, ads_txt.status_code)
+        self.assertEqual(
+            'google.com, pub-1234567890123456, DIRECT, '
+            'f08c47fec0942fa0\n',
+            ads_txt.get_data(as_text=True),
+        )
+
+    def test_invalid_adsense_client_is_rejected(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'ca-pub- followed by 16 digits',
+        ):
+            create_app(
+                {
+                    'ADSENSE_CLIENT': 'publisher-id',
+                    'TESTING': True,
+                },
+                run_store=self.store,
+            )
+
+    def test_ads_txt_is_absent_when_ads_are_disabled(self):
+        self.assertEqual(404, self.client.get('/ads.txt').status_code)
 
     def test_catalog_has_all_games_without_private_answers(self):
         response = self.client.get('/api/games')

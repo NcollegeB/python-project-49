@@ -126,7 +126,7 @@ class BenchmarkCalculationTest(unittest.TestCase):
             'prime': 8.9,
             'number-memory': 9.3,
             'verbal-memory': 13.3,
-            'direction-focus': 11.1,
+            'direction-focus': 11.0,
             'symbol-match': 12.3,
             'word-scramble': 8.9,
             'culmination': 9.9,

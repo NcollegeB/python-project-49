@@ -30,6 +30,7 @@ const SUPPORTED_ARROW_ROTATIONS = new Set([
     180, 195, 200, 210, 220, 225, 230, 240, 250, 255,
     270, 285, 290, 300, 310, 315, 320, 330, 340, 345,
 ]);
+const THREE_D_RENDER_MODES = new Set(['direction_3d', 'polycube_3d']);
 
 const iconBySlug = {
     even: '02',
@@ -1114,6 +1115,30 @@ function annotateSpatialReview(round, review) {
         const mismatchIndices = Array.isArray(review.mismatch_indices)
             ? review.mismatch_indices
             : [];
+        if (round.data?.render_mode === 'polycube_3d') {
+            const mismatchSet = new Set(
+                mismatchIndices.map(Number).filter(Number.isInteger),
+            );
+            dom.roundVisual.querySelectorAll(
+                '.polycube-model--right [data-cube-indices]',
+            ).forEach((cell) => {
+                const cubeIndices = String(
+                    cell.dataset.cubeIndices || '',
+                ).split(',').map(Number);
+                if (cubeIndices.some((index) => mismatchSet.has(index))) {
+                    cell.dataset.reviewState = 'mismatch';
+                }
+            });
+            if (review.matches === true) {
+                dom.roundVisual.querySelectorAll(
+                    '.polycube-model',
+                ).forEach((model) => {
+                    model.dataset.reviewState = 'match';
+                });
+            }
+            instrumentVisuals?.showReview(review);
+            return;
+        }
         mismatchIndices.forEach((rawIndex) => {
             const target = dom.roundVisual.querySelector(
                 `.symbol-token[data-side="right"][data-index="${Number(rawIndex)}"]`,
@@ -1385,6 +1410,279 @@ function symbolAccessibilityLabel(data) {
 }
 
 
+function spatialRenderMode(data) {
+    const mode = String(data?.render_mode || '').toLowerCase();
+    return THREE_D_RENDER_MODES.has(mode)
+        ? mode
+        : null;
+}
+
+
+function direction3DGlyph(item) {
+    if (item?.glyph) {
+        return String(item.glyph);
+    }
+    const glyphs = {
+        up: '↑',
+        right: '→',
+        down: '↓',
+        left: '←',
+        toward: '⊙',
+        towards: '⊙',
+        forward: '⊙',
+        away: '⊗',
+        backward: '⊗',
+    };
+    return glyphs[String(item?.direction || '').toLowerCase()] || '↑';
+}
+
+
+function direction3DRotation(direction) {
+    const rotations = {
+        up: 0,
+        right: 90,
+        down: 180,
+        left: 270,
+    };
+    return rotations[String(direction || '').toLowerCase()];
+}
+
+
+function hasVisualFeature(value) {
+    return !new Set(['', '0', 'false', 'none', 'off', 'null']).has(
+        String(value ?? '').trim().toLowerCase(),
+    );
+}
+
+
+function renderDirection3DFallback(round, visual) {
+    const data = round.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const labels = items.map((item) => (
+        String(
+            item?.accessible_label
+            || `${item?.direction || 'unknown'}-pointing solid`,
+        )
+    ));
+    const instruction = String(
+        data.accessible_instruction
+        || data.instruction
+        || round.prompt
+        || 'Find the unique solid and report its direction.',
+    ).trim();
+    if (labels.length) {
+        visual.setAttribute(
+            'aria-label',
+            `${instruction} Row by row: ${labels.join('; ')}.`,
+        );
+    }
+
+    const field = document.createElement('div');
+    field.className = (
+        'spatial-3d-fallback direction-3d-fallback arrow-row'
+    );
+    field.setAttribute('aria-hidden', 'true');
+    const columns = Math.max(
+        2,
+        Math.min(6, Math.round(Number(data.grid_columns || 4))),
+    );
+    field.dataset.columns = String(columns);
+    items.forEach((item, index) => {
+        const token = document.createElement('span');
+        token.className = 'arrow-token direction-3d-token';
+        token.dataset.index = String(index);
+        token.dataset.direction = String(item?.direction || '');
+        token.dataset.solid = String(item?.solid || 'prism').toLowerCase();
+        token.dataset.band = String(item?.band || 'none').toLowerCase();
+        const rotation = direction3DRotation(item?.direction);
+        if (Number.isFinite(rotation)) {
+            token.dataset.rotation = String(rotation);
+        }
+        if (hasVisualFeature(item?.beacon)) {
+            token.dataset.beacon = 'true';
+            token.append(createTextElement(
+                'span',
+                'direction-3d-token__beacon',
+                '',
+            ));
+        }
+        const band = createTextElement(
+            'span',
+            'direction-3d-token__band',
+            '',
+        );
+        band.setAttribute('aria-hidden', 'true');
+        token.append(
+            band,
+            createTextElement(
+                'span',
+                'arrow-token__glyph',
+                direction3DGlyph(item),
+            ),
+        );
+        field.append(token);
+    });
+    visual.append(field);
+}
+
+
+function normaliseCubeList(rawCubes) {
+    if (!Array.isArray(rawCubes)) {
+        return [];
+    }
+    return rawCubes.flatMap((cube, index) => {
+        if (!Array.isArray(cube) || cube.length < 3) {
+            return [];
+        }
+        const coordinates = cube.slice(0, 3).map(Number);
+        if (!coordinates.every(Number.isFinite)) {
+            return [];
+        }
+        return [{
+            coordinates: coordinates.map((value) => Math.round(value)),
+            index,
+        }];
+    });
+}
+
+
+function cubeCoordinateLabel(cubes) {
+    return cubes.map(({coordinates}) => (
+        `(${coordinates.join(', ')})`
+    )).join(', ');
+}
+
+
+function projectionCells(cubes, horizontalAxis, verticalAxis) {
+    if (!cubes.length) {
+        return {width: 1, height: 1, cells: new Map()};
+    }
+    const horizontalValues = cubes.map(
+        ({coordinates}) => coordinates[horizontalAxis],
+    );
+    const verticalValues = cubes.map(
+        ({coordinates}) => coordinates[verticalAxis],
+    );
+    const minimumHorizontal = Math.min(...horizontalValues);
+    const maximumHorizontal = Math.max(...horizontalValues);
+    const minimumVertical = Math.min(...verticalValues);
+    const maximumVertical = Math.max(...verticalValues);
+    const width = Math.min(8, maximumHorizontal - minimumHorizontal + 1);
+    const height = Math.min(8, maximumVertical - minimumVertical + 1);
+    const cells = new Map();
+    cubes.forEach(({coordinates, index}) => {
+        const column = coordinates[horizontalAxis] - minimumHorizontal;
+        const row = maximumVertical - coordinates[verticalAxis];
+        if (column >= width || row >= height) {
+            return;
+        }
+        const key = `${row}:${column}`;
+        const indices = cells.get(key) || [];
+        indices.push(index);
+        cells.set(key, indices);
+    });
+    return {width, height, cells};
+}
+
+
+function renderCubeProjection(cubes, label, horizontalAxis, verticalAxis) {
+    const projection = projectionCells(
+        cubes,
+        horizontalAxis,
+        verticalAxis,
+    );
+    const figure = document.createElement('div');
+    figure.className = 'polycube-projection';
+    figure.dataset.columns = String(projection.width);
+    figure.append(createTextElement(
+        'span',
+        'polycube-projection__label',
+        label,
+    ));
+    const grid = document.createElement('span');
+    grid.className = 'polycube-projection__grid';
+    grid.dataset.columns = String(projection.width);
+    for (
+        let index = 0;
+        index < projection.width * projection.height;
+        index += 1
+    ) {
+        const row = Math.floor(index / projection.width);
+        const column = index % projection.width;
+        const cubeIndices = projection.cells.get(`${row}:${column}`) || [];
+        const cell = document.createElement('span');
+        cell.className = cubeIndices.length
+            ? 'polycube-projection__cell is-filled'
+            : 'polycube-projection__cell';
+        if (cubeIndices.length) {
+            cell.dataset.cubeIndices = cubeIndices.join(',');
+        }
+        grid.append(cell);
+    }
+    figure.append(grid);
+    return figure;
+}
+
+
+function renderPolycubeModel(cubes, side) {
+    const model = document.createElement('div');
+    model.className = `polycube-model polycube-model--${side}`;
+    model.dataset.side = side;
+    model.append(createTextElement(
+        'strong',
+        'polycube-model__label',
+        side.toUpperCase(),
+    ));
+    const projections = document.createElement('div');
+    projections.className = 'polycube-projections';
+    projections.append(
+        renderCubeProjection(cubes, 'FRONT', 0, 1),
+        renderCubeProjection(cubes, 'SIDE', 2, 1),
+        renderCubeProjection(cubes, 'TOP', 0, 2),
+    );
+    model.append(projections);
+    return model;
+}
+
+
+function renderPolycube3DFallback(round, visual) {
+    const data = round.data || {};
+    const leftCubes = normaliseCubeList(data.left_cubes);
+    const rightCubes = normaliseCubeList(data.right_cubes);
+    const instruction = String(
+        data.accessible_instruction
+        || data.instruction
+        || round.prompt
+        || 'Can these two solids match after rotation?',
+    ).trim();
+    visual.setAttribute(
+        'aria-label',
+        (
+            `${instruction} Left solid: `
+            + `${
+                data.accessible_left
+                || `cubes at ${cubeCoordinateLabel(leftCubes)}`
+            }. Right solid: ${
+                data.accessible_right
+                || `cubes at ${cubeCoordinateLabel(rightCubes)}`
+            }.`
+        ),
+    );
+
+    const comparison = document.createElement('div');
+    comparison.className = (
+        'spatial-3d-fallback polycube-fallback'
+    );
+    comparison.setAttribute('aria-hidden', 'true');
+    comparison.append(
+        renderPolycubeModel(leftCubes, 'left'),
+        createTextElement('span', 'polycube-divider', '↔'),
+        renderPolycubeModel(rightCubes, 'right'),
+    );
+    visual.append(comparison);
+}
+
+
 function renderGenericVisual(round) {
     const visual = dom.roundVisual;
     const data = round.data || {};
@@ -1393,6 +1691,17 @@ function renderGenericVisual(round) {
     visual.className = `round-visual round-visual--${kind}`;
     visual.setAttribute('role', 'img');
     visual.setAttribute('aria-label', round.prompt || 'Current challenge');
+
+    const renderMode = spatialRenderMode(data);
+    if (renderMode) {
+        visual.classList.add('round-visual--spatial-3d');
+        if (renderMode === 'direction_3d') {
+            renderDirection3DFallback(round, visual);
+        } else {
+            renderPolycube3DFallback(round, visual);
+        }
+        return;
+    }
 
     if (
         kind === 'direction'

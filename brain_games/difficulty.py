@@ -1,7 +1,7 @@
 """Shared difficulty metadata for browser game runs."""
 
 MAX_LEVEL = 5
-EXTENDED_MAX_LEVEL = 8
+EXTENDED_MAX_LEVEL = 10
 CORRECT_PER_LEVEL = 3
 TIMEOUT_ANSWER = '__brainhacker_timeout__'
 
@@ -14,6 +14,8 @@ _DIFFICULTY_LABELS = {
     6: 'Master',
     7: 'Elite',
     8: 'Apex',
+    9: 'Spatial',
+    10: 'Extreme',
 }
 
 _TIME_LIMITS_MS = {
@@ -25,10 +27,12 @@ _TIME_LIMITS_MS = {
     'number-memory': (0, 0, 0, 0, 0),
     'verbal-memory': (0, 0, 0, 0, 0),
     'direction-focus': (
-        8000, 8000, 8500, 9500, 11000, 13000, 15000, 18000,
+        8000, 8000, 8500, 9500, 11000, 13000, 11500, 10000,
+        14000, 18000,
     ),
     'symbol-match': (
         6000, 7000, 8000, 9000, 11000, 14000, 17000, 20000,
+        24000, 30000,
     ),
     'word-scramble': (20000, 24000, 28000, 35000, 45000),
 }
@@ -45,10 +49,10 @@ VERBAL_HISTORY_WINDOWS = (4, 8, 14, 24, None)
 VERBAL_REPEAT_LAGS = (1, 2, 4, 7, 12)
 VERBAL_SEEN_PERCENTAGES = (35, 45, 50, 50, 50)
 
-DIRECTION_ITEM_COUNTS = (5, 9, 16, 25, 24, 36, 36, 36)
-DIRECTION_DIFFERENCES_DEG = (90, 60, 45, 30, 60, 45, 30, 15)
+DIRECTION_ITEM_COUNTS = (5, 9, 16, 24, 24, 36, 36, 36, 24, 24)
+DIRECTION_DIFFERENCES_DEG = (90, 60, 90, 90, 90, 90, 90, 90, 90, 90)
 
-SYMBOL_SEQUENCE_LENGTHS = (2, 4, 6, 8, 10, 12, 10, 9)
+SYMBOL_SEQUENCE_LENGTHS = (2, 4, 6, 8, 10, 12, 10, 9, 5, 6)
 
 _EXTENDED_LEVEL_GAMES = frozenset((
     'direction-focus',

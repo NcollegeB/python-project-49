@@ -8,7 +8,8 @@ SLUG = 'direction-focus'
 CATEGORY = 'Attention'
 RULES = (
     'Find the unique arrow or feature combination, then answer its '
-    'direction: up/down/left/right or u/d/l/r.'
+    'direction: up/down/left/right or u/d/l/r. The 3D rounds also '
+    'use toward/t and away/a.'
 )
 ANSWER_ALIASES = {
     'u': 'up',
@@ -23,6 +24,14 @@ ANSWER_ALIASES = {
     '↓': 'down',
     '←': 'left',
     '→': 'right',
+    't': 'toward',
+    'a': 'away',
+    'in': 'toward',
+    'out': 'away',
+    'forward': 'toward',
+    'back': 'away',
+    '⊙': 'toward',
+    '⊗': 'away',
 }
 DIRECTIONS = {
     'up': '↑',

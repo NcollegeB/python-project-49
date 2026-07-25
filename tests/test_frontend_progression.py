@@ -361,8 +361,37 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 "addEventListener('webglcontextlost'",
                 'this.canvas.setAttribute(\'aria-hidden\', \'true\')',
                 'Math.min(2, window.devicePixelRatio || 1)',
+                "new Set(['direction_3d', 'polycube_3d'])",
+                'depth: true',
+                'SOLID_VERTEX_SHADER',
+                'drawDirection3D()',
+                'drawPolycube3D()',
+                "'(prefers-reduced-motion: reduce)'",
+                "document.visibilityState !== 'hidden'",
         ):
             self.assertIn(source, self.instrument_javascript)
+        self.assertNotIn('Math.random(', self.instrument_javascript)
+
+    def test_spatial_rounds_have_webgl_and_static_accessible_renderers(self):
+        for source in (
+                "new Set(['direction_3d', 'polycube_3d'])",
+                'renderDirection3DFallback',
+                'renderPolycube3DFallback',
+                "'spatial-3d-fallback direction-3d-fallback arrow-row'",
+                "'spatial-3d-fallback polycube-fallback'",
+                "renderCubeProjection(cubes, 'FRONT', 0, 1)",
+                "renderCubeProjection(cubes, 'SIDE', 2, 1)",
+                "renderCubeProjection(cubes, 'TOP', 0, 2)",
+                "round.data?.render_mode === 'polycube_3d'",
+        ):
+            self.assertIn(source, self.javascript)
+        for source in (
+                '.round-visual[data-instrument="twgl-3d"]',
+                '.direction-3d-token',
+                '.polycube-projection',
+                '.polycube-projection__cell[data-review-state="mismatch"]',
+        ):
+            self.assertIn(source, self.stylesheet)
 
     def test_vercel_assets_match_local_assets(self):
         for name in (

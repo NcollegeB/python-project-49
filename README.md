@@ -5,7 +5,8 @@ endless brain games plus a mixed Culmination Test. Every correct answer adds
 one point, every mistake costs one of three lives, and the run ends when no
 lives remain. Every three correct answers advances one of five difficulty
 levels in most tests; Direction Focus, Symbol Match, and the Culmination Test
-continue through eight. Misses do not erase level progress, and the final
+continue through ten, ending in true 3D spatial rounds. Misses do not erase
+level progress, and the final
 level continues for as long as the player can survive. Create an account to
 keep a personal best for every test, or play without an account under a
 temporary display name.
@@ -153,7 +154,8 @@ service and does not claim medical or cognitive benefits.
 
 - For every yes/no game, enter `y` or `yes`, and `n` or `no`.
 - In Direction Focus, enter `u`, `d`, `l`, or `r` instead of `up`, `down`,
-  `left`, or `right`. Arrow characters also work.
+  `left`, or `right`. In the 3D levels, `t` means toward and `a` means
+  away. Arrow and depth symbols also work.
 - Enter `q` or `quit` during a game to save the current score and return to
   the hub.
 

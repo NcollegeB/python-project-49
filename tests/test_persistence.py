@@ -14,6 +14,7 @@ from sqlalchemy.schema import CreateTable
 
 from brain_games.accounts import DuplicateAccountError
 from brain_games.app import create_app
+from brain_games.difficulty import EXTENDED_MAX_LEVEL
 from brain_games.persistence import deserialize_run_state
 from brain_games.persistence import ensure_schema
 from brain_games.persistence import PostgresAccountStore
@@ -303,6 +304,12 @@ class RunSnapshotTest(unittest.TestCase):
         state.level = 4
         state.level_progress = 2
         state.truth_bags = {'prime:4': [True, False]}
+        state.content_bags = {
+            'word-scramble:2': ['planet', 'silver'],
+        }
+        state.recent_content = {
+            'word-scramble': ['one', 'two'],
+        }
         snapshot = serialize_run_state(state)
         expected_next_random = state.rng.random()
 
@@ -316,12 +323,15 @@ class RunSnapshotTest(unittest.TestCase):
         self.assertEqual(state.round, restored.round)
         self.assertEqual(state.ranked, restored.ranked)
         self.assertEqual(state.timing_mode, restored.timing_mode)
+        self.assertEqual(state.score_ruleset, restored.score_ruleset)
         self.assertEqual(state.level, restored.level)
         self.assertEqual(state.level_progress, restored.level_progress)
         self.assertEqual(state.seen_words, restored.seen_words)
         self.assertEqual(state.word_history, restored.word_history)
         self.assertEqual(state.game_bag, restored.game_bag)
         self.assertEqual(state.truth_bags, restored.truth_bags)
+        self.assertEqual(state.content_bags, restored.content_bags)
+        self.assertEqual(state.recent_content, restored.recent_content)
         self.assertEqual(expected_next_random, restored.rng.random())
 
     def test_snapshot_version_and_progress_are_strictly_validated(self):
@@ -337,6 +347,9 @@ class RunSnapshotTest(unittest.TestCase):
                 ('ranked', 'yes'),
                 ('timing_mode', 'turbo'),
                 ('truth_bags', {'even:1': [1]}),
+                ('content_bags', {'prime:1:1': [True]}),
+                ('recent_content', {'prime': [1]}),
+                ('score_ruleset', ''),
         ):
             with self.subTest(field=field):
                 malformed = dict(snapshot)
@@ -344,14 +357,30 @@ class RunSnapshotTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     deserialize_run_state(malformed, random.Random(9))
 
-    def test_snapshot_accepts_level_eight_only_for_eligible_games(self):
+    def test_legacy_snapshot_keeps_its_original_score_ruleset(self):
+        store = RunStore(random_factory=lambda: random.Random(8))
+        run = store.create('even', 'Ada')
+        snapshot = serialize_run_state(store._runs[run['run_id']])
+        for field in (
+                'score_ruleset',
+                'content_bags',
+                'recent_content'):
+            del snapshot[field]
+
+        restored = deserialize_run_state(snapshot, random.Random(9))
+
+        self.assertEqual('r3', restored.score_ruleset)
+        self.assertEqual({}, restored.content_bags)
+        self.assertEqual({}, restored.recent_content)
+
+    def test_snapshot_accepts_level_ten_only_for_eligible_games(self):
         store = RunStore(random_factory=lambda: random.Random(8))
 
         for slug in ('direction-focus', 'symbol-match', 'culmination'):
             with self.subTest(game=slug):
                 run = store.create(slug, 'Ada')
                 state = store._runs[run['run_id']]
-                state.level = 8
+                state.level = EXTENDED_MAX_LEVEL
                 snapshot = serialize_run_state(state)
 
                 restored = deserialize_run_state(
@@ -359,7 +388,7 @@ class RunSnapshotTest(unittest.TestCase):
                     random.Random(9),
                 )
 
-                self.assertEqual(8, restored.level)
+                self.assertEqual(EXTENDED_MAX_LEVEL, restored.level)
 
         run = store.create('even', 'Ada')
         state = store._runs[run['run_id']]

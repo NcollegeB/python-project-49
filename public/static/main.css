@@ -1023,6 +1023,19 @@ kbd {
     pointer-events: none;
 }
 
+.round-visual--spatial-3d {
+    min-height: clamp(270px, 34vw, 340px);
+}
+
+.round-visual[data-instrument="twgl-3d"] .spatial-3d-fallback {
+    visibility: hidden;
+}
+
+.spatial-3d-fallback {
+    position: relative;
+    z-index: 1;
+}
+
 .round-visual.is-hidden {
     visibility: hidden;
 }
@@ -1115,6 +1128,107 @@ kbd {
 
 .arrow-token[data-frame="square"] {
     border-radius: 0;
+}
+
+.direction-3d-fallback {
+    display: grid;
+    width: min(100%, 520px);
+    gap: clamp(5px, 1.3vw, 10px);
+}
+
+.direction-3d-fallback[data-columns="2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 150px;
+}
+
+.direction-3d-fallback[data-columns="3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-width: 230px;
+}
+
+.direction-3d-fallback[data-columns="4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    max-width: 310px;
+}
+
+.direction-3d-fallback[data-columns="5"] {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    max-width: 390px;
+}
+
+.direction-3d-fallback[data-columns="6"] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.direction-3d-token {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    aspect-ratio: 1;
+    overflow: hidden;
+    font-size: clamp(1.25rem, 3.5vw, 2.15rem);
+}
+
+.direction-3d-token[data-solid*="round"],
+.direction-3d-token[data-solid*="cylinder"],
+.direction-3d-token[data-solid*="tube"] {
+    border-radius: 50%;
+}
+
+.direction-3d-token[data-solid*="hex"] {
+    clip-path: polygon(
+        25% 3%, 75% 3%, 98% 50%,
+        75% 97%, 25% 97%, 2% 50%
+    );
+}
+
+.direction-3d-token[data-solid*="octa"] {
+    clip-path: polygon(50% 1%, 99% 50%, 50% 99%, 1% 50%);
+}
+
+.direction-3d-token[data-solid*="tri"],
+.direction-3d-token[data-solid*="tetra"] {
+    clip-path: polygon(50% 2%, 98% 96%, 2% 96%);
+    padding-top: 14%;
+}
+
+.direction-3d-token__band {
+    position: absolute;
+    z-index: 2;
+    right: 16%;
+    bottom: 18%;
+    left: 16%;
+    height: 2px;
+    background: var(--rule-dark);
+    transform: rotate(var(--arrow-rotation, 0deg));
+    transform-origin: center;
+}
+
+.direction-3d-token[data-band="none"] .direction-3d-token__band,
+.direction-3d-token[data-band="off"] .direction-3d-token__band,
+.direction-3d-token[data-band="false"] .direction-3d-token__band {
+    display: none;
+}
+
+.direction-3d-token[data-band="double"] .direction-3d-token__band,
+.direction-3d-token[data-band="twin"] .direction-3d-token__band,
+.direction-3d-token[data-band="split"] .direction-3d-token__band {
+    height: 5px;
+    border-top: 1px solid var(--rule-dark);
+    border-bottom: 1px solid var(--rule-dark);
+    background: transparent;
+}
+
+.direction-3d-token__beacon {
+    position: absolute;
+    z-index: 3;
+    top: 7px;
+    left: 7px;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--sheet);
+    border-radius: 50%;
+    background: var(--ink);
 }
 
 .arrow-token[data-rotation="0"],
@@ -1313,6 +1427,119 @@ kbd {
     color: var(--rule-dark);
     font-size: clamp(2.3rem, 7vw, 4.5rem);
     font-weight: 300;
+}
+
+.polycube-fallback {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    width: min(100%, 680px);
+    gap: clamp(9px, 2vw, 24px);
+}
+
+.polycube-model {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--rule);
+    background: var(--sheet);
+}
+
+.polycube-model[data-review-state="match"] {
+    border-color: var(--error);
+    outline: 1px solid var(--error);
+    outline-offset: 3px;
+    background: var(--error-soft);
+}
+
+.polycube-model__label,
+.polycube-projection__label {
+    display: block;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+}
+
+.polycube-model__label {
+    margin-bottom: 8px;
+}
+
+.polycube-projections {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.polycube-projection {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.polycube-projection__grid {
+    display: grid;
+    width: 100%;
+    max-width: 54px;
+    border-top: 1px solid var(--rule);
+    border-left: 1px solid var(--rule);
+}
+
+.polycube-projection__grid[data-columns="1"] {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="5"] {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="6"] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="7"] {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.polycube-projection__grid[data-columns="8"] {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.polycube-projection__cell {
+    min-width: 0;
+    border-right: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    background: transparent;
+    aspect-ratio: 1;
+}
+
+.polycube-projection__cell.is-filled {
+    background: var(--ink);
+}
+
+.polycube-projection__cell[data-review-state="mismatch"] {
+    outline: 2px solid var(--error);
+    outline-offset: -2px;
+    background: var(--error);
+}
+
+.polycube-divider {
+    color: var(--rule-dark);
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
 }
 
 .sequence-token,
@@ -2251,6 +2478,32 @@ kbd {
 
     .round-visual--direction {
         padding-inline: 0;
+    }
+
+    .round-visual--spatial-3d {
+        min-height: 290px;
+        padding-inline: 4px;
+    }
+
+    .polycube-fallback {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 7px;
+    }
+
+    .polycube-divider {
+        display: none;
+    }
+
+    .polycube-model {
+        padding: 7px 5px;
+    }
+
+    .polycube-projections {
+        gap: 3px;
+    }
+
+    .polycube-projection__label {
+        font-size: 0.46rem;
     }
 
     .round-visual--memory .prompt-value {

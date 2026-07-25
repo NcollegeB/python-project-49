@@ -17,6 +17,9 @@ class FrontendProgressionContractTest(unittest.TestCase):
         cls.stylesheet = (STATIC_ROOT / 'main.css').read_text(
             encoding='utf-8',
         )
+        cls.instrument_javascript = (
+            STATIC_ROOT / 'instrument_visuals.js'
+        ).read_text(encoding='utf-8')
         cls.template = (
             PROJECT_ROOT / 'brain_games' / 'templates' / 'index.html'
         ).read_text(encoding='utf-8')
@@ -82,7 +85,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
         self.assertIn('max-width: 374px;', self.stylesheet)
         self.assertIn('.round-visual--direction', self.stylesheet)
         self.assertIn(
-            'directionData.arrows.forEach((arrow) => {',
+            'directionData.arrows.forEach((arrow, index) => {',
             self.javascript,
         )
         self.assertIn('.symbol-sequence', self.stylesheet)
@@ -282,7 +285,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
             1,
         )[1].split('}', 1)[0]
         for source in (
-                'height: 64px;',
+                'height: 96px;',
                 'overflow-y: auto;',
                 'overflow-wrap: anywhere;',
                 'scrollbar-gutter: stable;',
@@ -294,7 +297,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
             1,
         )[1]
         self.assertIn(
-            '.feedback-region {\n        height: 80px;\n    }',
+            'height: 118px;',
             mobile_styles,
         )
         self.assertIn(
@@ -311,8 +314,62 @@ class FrontendProgressionContractTest(unittest.TestCase):
             self.template,
         )
 
+    def test_wrong_answers_use_game_specific_review_states(self):
+        for source in (
+                'const CORRECT_ADVANCE_MS = 420;',
+                'const WRONG_REVIEW_MS = {',
+                "'direction-focus': 2200",
+                "'symbol-match': 2300",
+                "'word-scramble': 2300",
+                'answerReviewDelay(answeredRound, grading, runResult)',
+                'showWrongAnswerReview',
+                'grading.review',
+                'REVIEW_SKIP_DELAY_MS',
+                'skipRemainingMs',
+                'pauseAnswerTransitionForVisibility();',
+                'resumeAnswerTransitionFromVisibility();',
+                'advanceAnswerTransition({manual: true})',
+                'dom.activeState.contains(document.activeElement)',
+                'pauseGameForDialog',
+                'resumeGameAfterDialog',
+        ):
+            self.assertIn(source, self.javascript)
+        self.assertNotIn('const FEEDBACK_DELAY', self.javascript)
+        self.assertIn('data-review="true"', self.stylesheet)
+        self.assertIn('.feedback-continue', self.stylesheet)
+        self.assertIn('id="reviewContinue"', self.template)
+        feedback_markup = self.template.split(
+            'id="feedbackRegion"',
+            1,
+        )[1].split('</div>', 1)[0]
+        self.assertNotIn('reviewContinue', feedback_markup)
+
+    def test_twgl_instrument_layer_is_local_and_progressively_enhanced(self):
+        self.assertIn(
+            "filename='vendor/twgl-7.0.0.min.js'",
+            self.template,
+        )
+        self.assertIn(
+            "import {InstrumentVisuals} from './instrument_visuals.js';",
+            self.javascript,
+        )
+        for source in (
+                "new Set(['direction-focus', 'symbol-match'])",
+                "this.canvas.getContext('webgl'",
+                'twgl.createProgramInfo',
+                'twgl.createBufferInfoFromArrays',
+                "addEventListener('webglcontextlost'",
+                'this.canvas.setAttribute(\'aria-hidden\', \'true\')',
+                'Math.min(2, window.devicePixelRatio || 1)',
+        ):
+            self.assertIn(source, self.instrument_javascript)
+
     def test_vercel_assets_match_local_assets(self):
-        for name in ('app.js', 'main.css'):
+        for name in (
+                'app.js',
+                'instrument_visuals.js',
+                'main.css',
+        ):
             self.assertEqual(
                 (STATIC_ROOT / name).read_bytes(),
                 (PUBLIC_STATIC_ROOT / name).read_bytes(),

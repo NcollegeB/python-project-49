@@ -144,7 +144,14 @@
                     </div>
                 </form>
 
-                <div class="feedback-region" id="feedbackRegion" role="status" aria-live="polite" aria-atomic="true"></div>
+                <div class="feedback-tray">
+                    <div class="feedback-region" id="feedbackRegion"
+                         role="status" aria-live="polite" aria-atomic="true"></div>
+                    <button class="feedback-continue" id="reviewContinue"
+                            type="button" hidden disabled>
+                        Continue ↵
+                    </button>
+                </div>
             </section>
 
             <section class="result-state" id="resultState" aria-labelledby="resultHeading" hidden>
@@ -235,5 +242,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='vendor/twgl-7.0.0.min.js') }}"></script>
 <script nonce="{{ csp_nonce }}" type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

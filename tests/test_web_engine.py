@@ -120,6 +120,53 @@ def evaluate_expression(expression):
     return eval(python_expression, {'__builtins__': {}}, {})
 
 
+def rotate_symbol_grid_for_review(angles, quarter_turns):
+    expected = list(angles)
+    for _turn in range(quarter_turns):
+        rotated = [None] * 9
+        for row in range(3):
+            for column in range(3):
+                target_row = column
+                target_column = 2 - row
+                target_index = (target_row * 3) + target_column
+                source_index = (row * 3) + column
+                rotated[target_index] = (expected[source_index] + 90) % 360
+        expected = rotated
+    return expected
+
+
+def symbol_review_values(data):
+    rule = data['comparison_rule']
+    transform = data['transform_degrees']
+    if rule == 'exact':
+        expected = [
+            token['symbol']
+            for token in data['left_tokens']
+        ]
+    elif rule == 'global_rotation':
+        expected = [
+            (token['rotation_deg'] + transform) % 360
+            for token in data['left_tokens']
+        ]
+    else:
+        expected = rotate_symbol_grid_for_review(
+            [
+                token['rotation_deg']
+                for token in data['left_tokens']
+            ],
+            transform // 90,
+        )
+    actual = [
+        (
+            token['symbol']
+            if rule == 'exact'
+            else token['rotation_deg']
+        )
+        for token in data['right_tokens']
+    ]
+    return expected, actual
+
+
 class CatalogTest(unittest.TestCase):
 
     def test_catalog_includes_all_core_games_and_culmination(self):
@@ -294,6 +341,240 @@ class RunStoreTest(unittest.TestCase):
             result['round']['round_id'],
         )
         assert_no_private_answer(self, result['round'])
+
+    def test_review_is_revealed_only_after_each_round_is_graded(self):
+        slugs = [game.SLUG for game in CORE_GAMES]
+        slugs.append('culmination')
+
+        for slug in slugs:
+            with self.subTest(game=slug):
+                run = self.store.create(slug, 'Ada')
+                active = self.store._runs[run['run_id']].round
+                private_review = active['review']
+
+                assert_no_forbidden_keys(
+                    self,
+                    run['round'],
+                    {'review'},
+                )
+                answered = self.store.answer(
+                    run['run_id'],
+                    run['round']['round_id'],
+                    active['expected_answer'],
+                )
+
+                self.assertEqual(
+                    private_review,
+                    answered['result']['review'],
+                )
+                self.assertTrue(
+                    answered['result']['review']['explanation'],
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    answered['round'],
+                    {'review'},
+                )
+
+    def test_verbal_review_reports_new_and_seen_prompt_history(self):
+        new_run = self.store.create('verbal-memory', 'New')
+        new_result = self.store.answer(
+            new_run['run_id'],
+            new_run['round']['round_id'],
+            'no',
+        )
+        new_review = new_result['result']['review']
+
+        self.assertFalse(new_review['was_seen'])
+        self.assertIsNone(new_review['prior_lag'])
+        self.assertIn('had not appeared', new_review['explanation'])
+
+        seen_run = self.store.create('verbal-memory', 'Seen')
+        state = self.store._runs[seen_run['run_id']]
+        target = RunStore._verbal_term_for_index(0)
+        other = RunStore._verbal_term_for_index(1)
+        state.level = 2
+        state.word_history = [target, other]
+        state.seen_words = {target, other}
+        state.new_word_index = 2
+        state.truth_bags = {'verbal-memory:2': [True]}
+        state.round = self.store._make_round(state)
+        public = self.store._public_run(state)
+
+        self.assertEqual(target, public['round']['data']['word'])
+        assert_no_forbidden_keys(self, public['round'], {'review'})
+        seen_result = self.store.answer(
+            public['run_id'],
+            public['round']['round_id'],
+            'yes',
+        )
+        seen_review = seen_result['result']['review']
+
+        self.assertTrue(seen_review['was_seen'])
+        self.assertEqual(2, seen_review['prior_lag'])
+        self.assertIn('2 prompts ago', seen_review['explanation'])
+
+    def test_direction_review_identifies_private_target_after_shuffle(self):
+        run = self.store.create('direction-focus', 'Ada')
+        state = self.store._runs[run['run_id']]
+        state.level = EXTENDED_MAX_LEVEL
+        state.round = self.store._make_round(state)
+        public = self.store._public_run(state)
+        private_review = state.round['review']
+        target_index = private_review['target_index']
+        target_angle = web_engine._DIRECTION_ANGLES[
+            state.round['expected_answer']
+        ]
+
+        self.assertEqual(
+            target_angle,
+            public['round']['data']['items'][target_index]['rotation_deg'],
+        )
+        assert_no_forbidden_keys(
+            self,
+            public['round'],
+            {'review', 'target_index', '_review_target'},
+        )
+        wrong_answer = next(
+            choice
+            for choice in public['round']['choices']
+            if choice != state.round['expected_answer']
+        )
+        result = self.store.answer(
+            public['run_id'],
+            public['round']['round_id'],
+            wrong_answer,
+        )
+
+        self.assertEqual(target_index, result['result']['review'][
+            'target_index'
+        ])
+
+    def test_symbol_review_identifies_private_transformed_mismatch(self):
+        run = self.store.create('symbol-match', 'Ada')
+        state = self.store._runs[run['run_id']]
+        state.level = EXTENDED_MAX_LEVEL
+        state.truth_bags = {'symbol-match:8': [False]}
+        state.round = self.store._make_round(state)
+        public = self.store._public_run(state)
+        review = state.round['review']
+        data = public['round']['data']
+        expected = RunStore._rotate_arrow_grid(
+            [
+                token['rotation_deg']
+                for token in data['left_tokens']
+            ],
+            data['transform_degrees'] // 90,
+        )
+        actual = [
+            token['rotation_deg']
+            for token in data['right_tokens']
+        ]
+        mismatches = [
+            index
+            for index, pair in enumerate(zip(expected, actual))
+            if pair[0] != pair[1]
+        ]
+
+        self.assertFalse(review['matches'])
+        self.assertEqual(mismatches, review['mismatch_indices'])
+        self.assertEqual(1, len(review['mismatch_indices']))
+        assert_no_forbidden_keys(
+            self,
+            public['round'],
+            {'review', 'mismatch_indices'},
+        )
+        result = self.store.answer(
+            public['run_id'],
+            public['round']['round_id'],
+            'yes',
+        )
+
+        self.assertEqual(
+            review['mismatch_indices'],
+            result['result']['review']['mismatch_indices'],
+        )
+
+    def test_direction_review_target_is_unique_at_every_level(self):
+        for level in range(1, EXTENDED_MAX_LEVEL + 1):
+            with self.subTest(level=level):
+                run = self.store.create('direction-focus', 'Ada')
+                state = self.store._runs[run['run_id']]
+                state.level = level
+                state.round = self.store._make_round(state)
+                public = self.store._public_run(state)['round']
+                review = state.round['review']
+                items = public['data']['items']
+                feature_count = public['data']['feature_count']
+
+                def feature_key(item):
+                    features = [item['rotation_deg']]
+                    if feature_count >= 2:
+                        features.append(item['frame'])
+                    if feature_count >= 3:
+                        features.append(item['marker'])
+                    return tuple(features)
+
+                feature_counts = Counter(map(feature_key, items))
+                target_index = review['target_index']
+                target = items[target_index]
+
+                self.assertEqual(1, feature_counts[feature_key(target)])
+                self.assertEqual(
+                    web_engine._DIRECTION_ANGLES[
+                        state.round['expected_answer']
+                    ],
+                    target['rotation_deg'],
+                )
+                self.assertEqual(
+                    [target_index],
+                    [
+                        index
+                        for index, item in enumerate(items)
+                        if feature_counts[feature_key(item)] == 1
+                    ],
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'review', 'target_index', '_review_target'},
+                )
+
+    def test_symbol_review_matches_every_level_and_rule(self):
+        for level in range(1, EXTENDED_MAX_LEVEL + 1):
+            for matches in (True, False):
+                with self.subTest(level=level, matches=matches):
+                    run = self.store.create('symbol-match', 'Ada')
+                    state = self.store._runs[run['run_id']]
+                    state.level = level
+                    state.truth_bags = {
+                        'symbol-match:{}'.format(level): [matches],
+                    }
+                    state.round = self.store._make_round(state)
+                    public = self.store._public_run(state)['round']
+                    data = public['data']
+                    review = state.round['review']
+                    expected, actual = symbol_review_values(data)
+                    mismatch_indices = [
+                        index
+                        for index, pair in enumerate(zip(expected, actual))
+                        if pair[0] != pair[1]
+                    ]
+
+                    self.assertEqual(matches, review['matches'])
+                    self.assertEqual(
+                        mismatch_indices,
+                        review['mismatch_indices'],
+                    )
+                    self.assertEqual(
+                        0 if matches else 1,
+                        len(review['mismatch_indices']),
+                    )
+                    assert_no_forbidden_keys(
+                        self,
+                        public,
+                        {'review', 'mismatch_indices'},
+                    )
 
     def test_stale_duplicate_and_invalid_choice_do_not_change_run(self):
         run = self.store.create('even', 'Ada')

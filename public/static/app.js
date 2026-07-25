@@ -1,9 +1,26 @@
 import {ArcadeAudio} from './audio.js';
+import {InstrumentVisuals} from './instrument_visuals.js';
 
 
 const PLAYER_STORAGE_KEY = 'brainhacker-player-name';
 const GUEST_PREFIX = 'Guest#';
-const FEEDBACK_DELAY = 620;
+const CORRECT_ADVANCE_MS = 420;
+const LEVEL_UP_ADVANCE_MS = 900;
+const REVIEW_SKIP_DELAY_MS = 450;
+const TIMEOUT_REVIEW_BONUS_MS = 450;
+const FINAL_MISS_REVIEW_BONUS_MS = 300;
+const WRONG_REVIEW_MS = {
+    even: 1450,
+    calc: 2100,
+    gcd: 2300,
+    progression: 2600,
+    prime: 1900,
+    'number-memory': 2300,
+    'verbal-memory': 1800,
+    'direction-focus': 2200,
+    'symbol-match': 2300,
+    'word-scramble': 2300,
+};
 const STILL_CHECKING_DELAY = 1000;
 const TIMEOUT_ANSWER = '__brainhacker_timeout__';
 const TIMEOUT_RETRY_DELAYS = [500, 1000, 2000, 4000, 5000];
@@ -59,11 +76,22 @@ const state = {
         paused: false,
     },
     transitionTimer: null,
+    answerTransition: {
+        callback: null,
+        deadline: null,
+        remainingMs: 0,
+        paused: false,
+        skippable: false,
+        canSkipAt: null,
+        skipRemainingMs: 0,
+        unlockTimer: null,
+    },
     pendingTimer: null,
     pendingRoundId: null,
     pendingControl: null,
     focusRestoreFrame: null,
     leaderboardRequestSequence: 0,
+    leaderboardOpen: false,
     timeoutRetry: {
         timer: null,
         runId: null,
@@ -90,6 +118,7 @@ const state = {
 };
 
 let audio;
+let instrumentVisuals;
 let guestPlayerName;
 
 
@@ -118,7 +147,8 @@ function cacheDom() {
         'roundPrompt', 'roundTimer', 'timerText', 'timerProgress',
         'timerAnnouncement', 'roundVisual',
         'memoryCurtain', 'answerForm', 'answerInput', 'submitAnswer',
-        'choiceControls', 'answerRow', 'feedbackRegion', 'resultScore', 'resultBest',
+        'choiceControls', 'answerRow', 'feedbackRegion', 'reviewContinue',
+        'resultScore', 'resultBest',
         'resultAverage', 'resultPercentile', 'resultRank',
         'resultMessage', 'retryButton', 'resultMenuButton',
         'leaderboardDialog', 'leaderboardRows', 'leaderboardFilter',
@@ -409,20 +439,175 @@ function clearTransitionTimer() {
         window.clearTimeout(state.transitionTimer);
         state.transitionTimer = null;
     }
+    if (state.answerTransition.unlockTimer !== null) {
+        window.clearTimeout(state.answerTransition.unlockTimer);
+    }
+    state.answerTransition.callback = null;
+    state.answerTransition.deadline = null;
+    state.answerTransition.remainingMs = 0;
+    state.answerTransition.paused = false;
+    state.answerTransition.skippable = false;
+    state.answerTransition.canSkipAt = null;
+    state.answerTransition.skipRemainingMs = 0;
+    state.answerTransition.unlockTimer = null;
 }
 
 
-function clearPendingFeedback() {
+function clearPendingFeedback(options = {}) {
     if (state.pendingTimer) {
         window.clearTimeout(state.pendingTimer);
         state.pendingTimer = null;
     }
     state.pendingRoundId = null;
     if (state.pendingControl) {
-        state.pendingControl.removeAttribute('data-submitted');
+        if (options.preserveSubmitted !== true) {
+            state.pendingControl.removeAttribute('data-submitted');
+        }
         state.pendingControl = null;
     }
     dom.answerForm?.setAttribute('aria-busy', 'false');
+}
+
+
+function leaderboardIsOpen() {
+    if (!dom.leaderboardDialog) {
+        return false;
+    }
+    return (
+        state.leaderboardOpen
+        || dom.leaderboardDialog.open === true
+    );
+}
+
+
+function gameInteractionIsPaused() {
+    return (
+        document.visibilityState === 'hidden'
+        || leaderboardIsOpen()
+    );
+}
+
+
+function enableReviewAdvance() {
+    if (!state.answerTransition.callback) {
+        return;
+    }
+    state.answerTransition.skipRemainingMs = 0;
+    state.answerTransition.canSkipAt = null;
+    if (dom.reviewContinue) {
+        dom.reviewContinue.disabled = false;
+    }
+}
+
+
+function armAnswerTransition() {
+    const transition = state.answerTransition;
+    if (!transition.callback || transition.paused) {
+        return;
+    }
+    const delay = Math.max(0, transition.remainingMs);
+    transition.deadline = window.performance.now() + delay;
+    state.transitionTimer = window.setTimeout(() => {
+        state.transitionTimer = null;
+        advanceAnswerTransition();
+    }, delay);
+
+    if (transition.skippable) {
+        const unlockDelay = Math.max(0, transition.skipRemainingMs);
+        transition.canSkipAt = window.performance.now() + unlockDelay;
+        transition.unlockTimer = window.setTimeout(() => {
+            transition.unlockTimer = null;
+            enableReviewAdvance();
+        }, unlockDelay);
+    }
+}
+
+
+function scheduleAnswerTransition(delay, callback, options = {}) {
+    clearTransitionTimer();
+    state.answerTransition.callback = callback;
+    state.answerTransition.remainingMs = Math.max(0, Number(delay || 0));
+    state.answerTransition.skippable = options.skippable === true;
+    state.answerTransition.skipRemainingMs = (
+        state.answerTransition.skippable
+            ? REVIEW_SKIP_DELAY_MS
+            : 0
+    );
+    state.answerTransition.canSkipAt = null;
+    state.answerTransition.paused = gameInteractionIsPaused();
+    if (!state.answerTransition.paused) {
+        armAnswerTransition();
+    }
+}
+
+
+function advanceAnswerTransition(options = {}) {
+    const transition = state.answerTransition;
+    if (!transition.callback) {
+        return false;
+    }
+    if (
+        options.manual === true
+        && (
+            !transition.skippable
+            || transition.skipRemainingMs > 0
+            || (
+                transition.canSkipAt !== null
+                && window.performance.now() < transition.canSkipAt
+            )
+        )
+    ) {
+        return false;
+    }
+    const callback = transition.callback;
+    clearTransitionTimer();
+    callback();
+    return true;
+}
+
+
+function pauseAnswerTransitionForVisibility() {
+    const transition = state.answerTransition;
+    if (!transition.callback || transition.paused) {
+        return;
+    }
+    if (transition.deadline !== null) {
+        transition.remainingMs = Math.max(
+            0,
+            transition.deadline - window.performance.now(),
+        );
+    }
+    if (transition.canSkipAt !== null) {
+        transition.skipRemainingMs = Math.max(
+            0,
+            transition.canSkipAt - window.performance.now(),
+        );
+    }
+    if (state.transitionTimer !== null) {
+        window.clearTimeout(state.transitionTimer);
+        state.transitionTimer = null;
+    }
+    if (transition.unlockTimer !== null) {
+        window.clearTimeout(transition.unlockTimer);
+        transition.unlockTimer = null;
+    }
+    transition.deadline = null;
+    transition.canSkipAt = null;
+    transition.paused = true;
+}
+
+
+function resumeAnswerTransitionFromVisibility() {
+    const transition = state.answerTransition;
+    if (
+        !transition.callback
+        || !transition.paused
+        || gameInteractionIsPaused()
+    ) {
+        return;
+    }
+    transition.paused = false;
+    armAnswerTransition();
 }
 
 
@@ -567,7 +752,7 @@ function countdownTick(timestamp) {
         clearCountdown();
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         countdown.frame = null;
         countdown.lastTick = null;
         countdown.paused = true;
@@ -601,7 +786,7 @@ function beginCountdown() {
     ) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.countdown.paused = true;
         return;
     }
@@ -632,7 +817,7 @@ function scheduleCountdownStart(round, remainingOverride = null) {
     dom.roundTimer.hidden = false;
     updateCountdownDisplay();
 
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.countdown.paused = true;
         return;
     }
@@ -677,6 +862,7 @@ function resumeCountdownFromVisibility() {
         || !countdown.paused
         || countdown.roundId !== state.round?.round_id
         || state.busy
+        || gameInteractionIsPaused()
     ) {
         return;
     }
@@ -763,8 +949,201 @@ function setFeedback(message, tone = 'neutral') {
     if (!dom.feedbackRegion) {
         return;
     }
+    dom.feedbackRegion.removeAttribute('data-review');
     dom.feedbackRegion.textContent = message;
     dom.feedbackRegion.dataset.tone = tone;
+    if (dom.reviewContinue) {
+        dom.reviewContinue.hidden = true;
+        dom.reviewContinue.disabled = true;
+    }
+}
+
+
+function setAnswerReviewFeedback(sourceName, grading, review) {
+    if (!dom.feedbackRegion) {
+        return;
+    }
+    const timedOut = grading.timed_out === true;
+    const submitted = String(grading.submitted_answer ?? '').trim();
+    const expected = String(grading.expected_answer ?? '').trim();
+    const label = createTextElement(
+        'span',
+        'feedback-review__label',
+        `${timedOut ? 'TIME' : 'MISS'} / ${sourceName}`,
+    );
+    const answerLine = timedOut
+        ? `No answer recorded · Correct answer: ${expected}`
+        : `Your answer: ${submitted} · Correct answer: ${expected}`;
+    const message = createTextElement(
+        'strong',
+        'feedback-review__answer',
+        answerLine,
+    );
+    const detail = createTextElement(
+        'span',
+        'feedback-review__detail',
+        review.explanation || `The answer was ${expected}.`,
+    );
+    const copy = document.createElement('span');
+    copy.className = 'feedback-review__copy';
+    copy.append(label, message, detail);
+    dom.feedbackRegion.replaceChildren(copy);
+    dom.feedbackRegion.dataset.tone = 'wrong';
+    dom.feedbackRegion.dataset.review = 'true';
+    if (dom.reviewContinue) {
+        dom.reviewContinue.hidden = false;
+        dom.reviewContinue.disabled = true;
+    }
+}
+
+
+function answerReviewDelay(round, grading, runResult) {
+    const sourceSlug = grading.source_slug || round.source_slug;
+    const sourceLevel = Math.max(
+        1,
+        Number(round.source_level ?? round.level ?? 1),
+    );
+    const complexityBonus = Math.min(420, (sourceLevel - 1) * 60);
+    const timeoutBonus = grading.timed_out
+        ? TIMEOUT_REVIEW_BONUS_MS
+        : 0;
+    const endingBonus = (
+        runResult.game_over
+        || runResult.ended
+        || !runResult.round
+    ) ? FINAL_MISS_REVIEW_BONUS_MS : 0;
+    return (
+        (WRONG_REVIEW_MS[sourceSlug] || 2100)
+        + complexityBonus
+        + timeoutBonus
+        + endingBonus
+    );
+}
+
+
+function normalisedAnswer(value) {
+    return String(value ?? '').trim().toLocaleLowerCase();
+}
+
+
+function markReviewedControls(grading, submittedControl) {
+    const expected = normalisedAnswer(grading.expected_answer);
+    submittedControl?.removeAttribute('data-submitted');
+    dom.choiceControls.querySelectorAll('button').forEach((button) => {
+        button.removeAttribute('data-submitted');
+        button.removeAttribute('data-review-state');
+        if (normalisedAnswer(button.dataset.value) === expected) {
+            button.dataset.reviewState = 'answer';
+        }
+    });
+    if (submittedControl?.classList.contains('choice-button')) {
+        submittedControl.dataset.reviewState = grading.correct
+            ? 'answer'
+            : 'submitted';
+    } else if (!grading.timed_out) {
+        dom.answerInput.dataset.reviewState = grading.correct
+            ? 'answer'
+            : 'submitted';
+    }
+}
+
+
+function revealNumberMemoryReview(round, grading) {
+    if (round.source_slug !== 'number-memory') {
+        return;
+    }
+    dom.memoryCurtain.hidden = true;
+    dom.roundVisual.classList.remove('is-hidden');
+    dom.roundVisual.removeAttribute('aria-hidden');
+    dom.roundVisual.setAttribute(
+        'aria-label',
+        `The number was ${grading.expected_answer}.`,
+    );
+    const answer = createTextElement(
+        'div',
+        'prompt-value prompt-value--review',
+        String(grading.expected_answer),
+    );
+    answer.dataset.reviewState = 'answer';
+    dom.roundVisual.replaceChildren(answer);
+}
+
+
+function annotateProgressionReview(round, grading) {
+    if (round.source_slug !== 'progression') {
+        return;
+    }
+    const hiddenIndex = Number(
+        grading.review?.hidden_index
+        ?? round.data?.hidden_index,
+    );
+    const token = dom.roundVisual.querySelector(
+        `.sequence-token[data-index="${hiddenIndex}"]`,
+    );
+    if (token) {
+        token.textContent = String(grading.expected_answer);
+        token.dataset.reviewState = 'answer';
+    }
+}
+
+
+function annotateScrambleReview(round, grading) {
+    if (round.source_slug !== 'word-scramble') {
+        return;
+    }
+    const answer = Array.from(String(grading.expected_answer || ''));
+    const tokens = dom.roundVisual.querySelectorAll('.letter-tile');
+    tokens.forEach((token, index) => {
+        token.textContent = answer[index] || '';
+        token.dataset.reviewState = 'answer';
+    });
+    dom.roundVisual.dataset.solution = 'true';
+}
+
+
+function annotateSpatialReview(round, review) {
+    if (round.source_slug === 'direction-focus') {
+        const target = dom.roundVisual.querySelector(
+            `.arrow-token[data-index="${Number(review.target_index)}"]`,
+        );
+        if (target) {
+            target.dataset.reviewState = 'answer';
+        }
+    }
+    if (round.source_slug === 'symbol-match') {
+        const mismatchIndices = Array.isArray(review.mismatch_indices)
+            ? review.mismatch_indices
+            : [];
+        mismatchIndices.forEach((rawIndex) => {
+            const target = dom.roundVisual.querySelector(
+                `.symbol-token[data-side="right"][data-index="${Number(rawIndex)}"]`,
+            );
+            if (target) {
+                target.dataset.reviewState = 'mismatch';
+            }
+        });
+        if (review.matches === true) {
+            dom.roundVisual.dataset.reviewMatch = 'true';
+        }
+    }
+    instrumentVisuals?.showReview(review);
+}
+
+
+function showWrongAnswerReview(round, grading, submittedControl) {
+    const review = grading.review && typeof grading.review === 'object'
+        ? grading.review
+        : {};
+    dom.activeState.dataset.feedback = 'wrong';
+    dom.activeState.dataset.review = 'true';
+    dom.roundVisual.dataset.review = 'true';
+    markReviewedControls(grading, submittedControl);
+    revealNumberMemoryReview(round, grading);
+    annotateProgressionReview(round, grading);
+    annotateScrambleReview(round, grading);
+    annotateSpatialReview(round, review);
+    const sourceName = round.source_name || state.selected.name;
+    setAnswerReviewFeedback(sourceName, grading, review);
 }
 
 
@@ -1063,10 +1442,11 @@ function renderGenericVisual(round) {
             row.dataset.columns = String(directionData.columns);
         }
         row.setAttribute('aria-hidden', 'true');
-        directionData.arrows.forEach((arrow) => {
+        directionData.arrows.forEach((arrow, index) => {
             const tokenData = arrowTokenData(arrow);
             const token = document.createElement('span');
             token.className = 'arrow-token';
+            token.dataset.index = String(index);
             if (typeof arrow === 'object' && arrow !== null) {
                 const frame = String(arrow.frame || '').toLowerCase();
                 const marker = String(arrow.marker || '').toLowerCase();
@@ -1126,10 +1506,15 @@ function renderGenericVisual(round) {
             if (patternColumns >= 2) {
                 group.dataset.columns = String(patternColumns);
             }
-            sequence.filter((symbol) => symbol !== null).forEach((symbol) => {
+            sequence.filter((symbol) => symbol !== null).forEach((
+                symbol,
+                symbolIndex,
+            ) => {
                 const tokenData = arrowTokenData(symbol);
                 const token = document.createElement('span');
                 token.className = 'symbol-token';
+                token.dataset.index = String(symbolIndex);
+                token.dataset.side = index === 0 ? 'left' : 'right';
                 if (tokenData.rotation !== null) {
                     token.dataset.rotation = String(tokenData.rotation);
                 }
@@ -1155,15 +1540,17 @@ function renderGenericVisual(round) {
         const sequence = data.sequence || [];
         const row = document.createElement('div');
         row.className = 'sequence-row';
-        sequence.forEach((number) => row.append(
-            createTextElement(
+        sequence.forEach((number, index) => {
+            const token = createTextElement(
                 'span',
                 number === '..' || number === null
                     ? 'sequence-token sequence-token--missing'
                     : 'sequence-token',
                 number === null ? '…' : String(number),
-            ),
-        ));
+            );
+            token.dataset.index = String(index);
+            row.append(token);
+        });
         visual.append(row);
         return;
     }
@@ -1277,7 +1664,7 @@ function beginMemoryPreviewTimer(roundId) {
     if (!memoryPreviewMatches(roundId)) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         preview.paused = true;
         return;
     }
@@ -1312,7 +1699,7 @@ function scheduleMemoryPreviewAfterPaint(roundId, paintedFrames = 0) {
     if (!memoryPreviewMatches(roundId)) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.preview.paused = true;
         return;
     }
@@ -1361,6 +1748,7 @@ function resumeMemoryPreviewFromVisibility() {
         !preview.roundId
         || !preview.paused
         || !memoryPreviewMatches(preview.roundId)
+        || gameInteractionIsPaused()
     ) {
         return;
     }
@@ -1375,7 +1763,7 @@ function startMemoryPreview(round) {
     state.preview.roundId = round.round_id;
     state.preview.totalMs = delay;
     state.preview.remainingMs = delay;
-    state.preview.paused = document.visibilityState === 'hidden';
+    state.preview.paused = gameInteractionIsPaused();
     dom.roundPrompt.textContent = round.data?.instruction
         || instructionBySlug[round.source_slug]
         || 'Memorize this.';
@@ -1399,6 +1787,7 @@ function renderRound(round) {
     state.roundNumber += 1;
     state.busy = false;
     dom.activeState.dataset.feedback = 'idle';
+    delete dom.activeState.dataset.review;
     delete dom.activeState.dataset.levelUp;
     dom.roundSource.textContent = round.source_name || state.selected.name;
     dom.roundSource.dataset.category = categoryClass(
@@ -1420,6 +1809,7 @@ function renderRound(round) {
     dom.roundValue.textContent = String(state.roundNumber);
     dom.answerInput.value = '';
     dom.answerInput.disabled = false;
+    dom.answerInput.removeAttribute('data-review-state');
     dom.submitAnswer.disabled = false;
     dom.answerForm.setAttribute('aria-busy', 'false');
     dom.choiceControls.querySelectorAll('button').forEach((button) => {
@@ -1428,9 +1818,13 @@ function renderRound(round) {
     dom.memoryCurtain.hidden = true;
     dom.roundVisual.classList.remove('is-hidden');
     dom.roundVisual.removeAttribute('aria-hidden');
+    delete dom.roundVisual.dataset.review;
+    delete dom.roundVisual.dataset.reviewMatch;
+    delete dom.roundVisual.dataset.solution;
     setFeedback('', 'neutral');
     updateCycle(round);
     renderGenericVisual(round);
+    instrumentVisuals?.render(round, dom.roundVisual);
     renderChoices(round.choices || []);
 
     if (Number(round.preview_ms || 0) > 0) {
@@ -1753,14 +2147,18 @@ async function submitAnswer(answer, control = null, options = {}) {
             return;
         }
         clearTimeoutRetry();
-        clearPendingFeedback();
         const runResult = unwrapRun(payload);
         const grading = runResult.result || payload.result || {};
+        const answeredRound = state.round;
+        clearPendingFeedback({
+            preserveSubmitted: grading.correct !== true,
+        });
         state.run = {...state.run, ...runResult};
         updateHud();
-        const sourceName = state.round.source_name || state.selected.name;
+        const sourceName = answeredRound.source_name || state.selected.name;
         if (grading.correct) {
             dom.activeState.dataset.feedback = 'correct';
+            markReviewedControls(grading, submittedControl);
             if (grading.leveled_up) {
                 dom.activeState.dataset.levelUp = 'true';
                 setFeedback(
@@ -1775,36 +2173,42 @@ async function submitAnswer(answer, control = null, options = {}) {
             }
             audio.cue('correct');
         } else {
-            dom.activeState.dataset.feedback = 'wrong';
-            const expected = grading.expected_answer;
-            const message = grading.timed_out
-                ? `${sourceName}: time ran out. The answer was ${expected}.`
-                : `${sourceName}: not quite. The answer was ${expected}.`;
-            setFeedback(message, 'wrong');
+            showWrongAnswerReview(
+                answeredRound,
+                grading,
+                submittedControl,
+            );
             audio.cue('wrong');
         }
 
+        const transitionDelay = grading.correct
+            ? (
+                grading.leveled_up
+                    ? LEVEL_UP_ADVANCE_MS
+                    : CORRECT_ADVANCE_MS
+            )
+            : answerReviewDelay(answeredRound, grading, runResult);
         if (runResult.game_over || runResult.ended || !runResult.round) {
             const completedRunId = state.run.run_id;
-            state.transitionTimer = window.setTimeout(
+            scheduleAnswerTransition(
+                transitionDelay,
                 () => {
-                    state.transitionTimer = null;
                     if (state.run?.run_id === completedRunId) {
                         finishRun(runResult);
                     }
                 },
-                FEEDBACK_DELAY + 120,
+                {skippable: grading.correct !== true},
             );
         } else {
             const activeRunId = state.run.run_id;
-            state.transitionTimer = window.setTimeout(
+            scheduleAnswerTransition(
+                transitionDelay,
                 () => {
-                    state.transitionTimer = null;
                     if (state.run?.run_id === activeRunId) {
                         renderRound(runResult.round);
                     }
                 },
-                FEEDBACK_DELAY,
+                {skippable: grading.correct !== true},
             );
         }
     } catch (error) {
@@ -1883,6 +2287,7 @@ function resultRunIsCurrent(runId, game, startSequence) {
 
 async function finishRun(result) {
     clearPreviewTimer();
+    clearTransitionTimer();
     clearPendingFeedback();
     clearTimeoutRetry();
     clearCountdown();
@@ -2159,21 +2564,46 @@ async function renderLeaderboard() {
 }
 
 
+function pauseGameForDialog() {
+    pauseAnswerTransitionForVisibility();
+    pauseCountdownForVisibility();
+    pauseMemoryPreviewForVisibility();
+}
+
+
+function resumeGameAfterDialog() {
+    resumeAnswerTransitionFromVisibility();
+    resumeCountdownFromVisibility();
+    resumeMemoryPreviewFromVisibility();
+}
+
+
 async function openLeaderboard() {
+    if (leaderboardIsOpen()) {
+        return;
+    }
+    pauseGameForDialog();
     dom.leaderboardFilter.replaceChildren();
     const allOption = new Option('All games', '');
     dom.leaderboardFilter.append(allOption);
     state.catalog.forEach((game) => {
         dom.leaderboardFilter.append(new Option(game.name, game.slug));
     });
-    const rendered = await renderLeaderboard();
-    if (!rendered) {
+    state.leaderboardOpen = true;
+    try {
+        if (typeof dom.leaderboardDialog.showModal === 'function') {
+            dom.leaderboardDialog.showModal();
+        } else {
+            dom.leaderboardDialog.hidden = false;
+        }
+    } catch (_error) {
+        state.leaderboardOpen = false;
+        resumeGameAfterDialog();
         return;
     }
-    if (typeof dom.leaderboardDialog.showModal === 'function') {
-        dom.leaderboardDialog.showModal();
-    } else {
-        dom.leaderboardDialog.hidden = false;
+    const rendered = await renderLeaderboard();
+    if (!rendered && leaderboardIsOpen()) {
+        closeLeaderboard();
     }
 }
 
@@ -2183,7 +2613,9 @@ function closeLeaderboard() {
     if (typeof dom.leaderboardDialog.close === 'function') {
         dom.leaderboardDialog.close();
     } else {
+        state.leaderboardOpen = false;
         dom.leaderboardDialog.hidden = true;
+        resumeGameAfterDialog();
         restoreCurrentAnswerFocus();
     }
 }
@@ -2192,6 +2624,9 @@ function closeLeaderboard() {
 function bindEvents() {
     dom.startRunButton?.addEventListener('click', startRun);
     dom.retryButton?.addEventListener('click', startRun);
+    dom.reviewContinue?.addEventListener('click', () => {
+        advanceAnswerTransition({manual: true});
+    });
     dom.resultMenuButton?.addEventListener('click', () => backToHome());
     dom.backButton?.addEventListener('click', () => backToHome());
     dom.answerForm?.addEventListener('submit', (event) => {
@@ -2208,6 +2643,8 @@ function bindEvents() {
     });
     dom.leaderboardDialog?.addEventListener('close', () => {
         invalidateLeaderboardRequests();
+        state.leaderboardOpen = false;
+        resumeGameAfterDialog();
         restoreCurrentAnswerFocus();
     });
 
@@ -2235,6 +2672,17 @@ function bindEvents() {
         if (event.key === 'Escape' && !dom.gameView.hidden) {
             event.preventDefault();
             backToHome();
+            return;
+        }
+        if (
+            state.answerTransition.callback
+            && state.answerTransition.skippable
+            && !leaderboardIsOpen()
+            && dom.activeState.contains(document.activeElement)
+            && (event.key === 'Enter' || event.key === ' ')
+        ) {
+            event.preventDefault();
+            advanceAnswerTransition({manual: true});
             return;
         }
         if (dom.gameView.hidden || dom.activeState.hidden || state.busy) {
@@ -2268,10 +2716,12 @@ function bindEvents() {
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
+            pauseAnswerTransitionForVisibility();
             pauseCountdownForVisibility();
             pauseMemoryPreviewForVisibility();
             return;
         }
+        resumeAnswerTransitionFromVisibility();
         resumeCountdownFromVisibility();
         resumeMemoryPreviewFromVisibility();
     });
@@ -2291,6 +2741,7 @@ function bindEvents() {
 async function initialise() {
     cacheDom();
     audio = new ArcadeAudio(dom.soundToggle);
+    instrumentVisuals = new InstrumentVisuals();
     bindEvents();
 
     try {

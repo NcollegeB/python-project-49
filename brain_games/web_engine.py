@@ -858,6 +858,7 @@ class RunStore:
             'level_before': level_before,
             'level_after': level_after,
             'leveled_up': leveled_up,
+            'review': copy.deepcopy(active_round.get('review', {})),
         }
 
     def _quit_state(self, state):
@@ -983,6 +984,7 @@ class RunStore:
             'aliases': dict(generated.get('aliases', {})),
             'choices': choices,
             'source_slug': source_slug,
+            'review': copy.deepcopy(generated.get('review', {})),
         }
 
     @staticmethod
@@ -1071,6 +1073,13 @@ class RunStore:
             'data': data,
             'choices': ['yes', 'no'],
             'aliases': brain_even.ANSWER_ALIASES,
+            'review': {
+                'parity': 'even' if wants_even else 'odd',
+                'explanation': '{} has an {} result.'.format(
+                    expression,
+                    'even' if wants_even else 'odd',
+                ),
+            },
         }
 
     @staticmethod
@@ -1191,6 +1200,9 @@ class RunStore:
             'data': {
                 'expression': expression,
                 'template': template,
+            },
+            'review': {
+                'explanation': '{} = {}.'.format(expression, answer),
             },
         }
 
@@ -1410,6 +1422,13 @@ class RunStore:
             'prompt': '{} {}'.format(first, second),
             'expected_answer': str(answer),
             'data': {'numbers': [first, second]},
+            'review': {
+                'explanation': 'The GCD of {} and {} is {}.'.format(
+                    first,
+                    second,
+                    answer,
+                ),
+            },
         }
 
     @staticmethod
@@ -1517,6 +1536,14 @@ class RunStore:
                 'pattern': pattern,
                 'pattern_label': pattern_label,
             },
+            'review': {
+                'hidden_index': hidden_index,
+                'pattern': pattern,
+                'explanation': '{}; the missing term is {}.'.format(
+                    pattern_label,
+                    answer,
+                ),
+            },
         }
 
     @staticmethod
@@ -1612,6 +1639,18 @@ class RunStore:
             level,
         )
         number = state.rng.choice(_PRIME_POOLS[level][is_prime])
+        if is_prime:
+            explanation = (
+                '{} has no divisors other than 1 and itself.'
+            ).format(number)
+            factor = None
+        else:
+            factor = _smallest_prime_factor(number)
+            explanation = '{} = {} × {}.'.format(
+                number,
+                factor,
+                number // factor,
+            )
         return {
             'kind': 'choice',
             'prompt': 'Is {} prime?'.format(number),
@@ -1619,6 +1658,11 @@ class RunStore:
             'data': {'number': number},
             'choices': ['yes', 'no'],
             'aliases': brain_prime.ANSWER_ALIASES,
+            'review': {
+                'is_prime': is_prime,
+                'factor': factor,
+                'explanation': explanation,
+            },
         }
 
     @staticmethod
@@ -1639,6 +1683,9 @@ class RunStore:
             'preview_ms': number_memory_preview_ms(digits),
             'time_limit_ms': 0,
             'hidden_prompt': brain_number_memory.HIDDEN_QUESTION,
+            'review': {
+                'explanation': 'The number was {}.'.format(number),
+            },
         }
 
     @staticmethod
@@ -1667,8 +1714,22 @@ class RunStore:
             ask_seen = False
         if ask_seen:
             word = state.rng.choice(repeat_words)
+            prior_lag = next(
+                len(state.word_history) - index
+                for index in range(len(state.word_history) - 1, -1, -1)
+                if state.word_history[index] == word
+            )
+            explanation = '"{}" appeared {} prompt{} ago.'.format(
+                word,
+                prior_lag,
+                '' if prior_lag == 1 else 's',
+            )
         else:
             word = RunStore._choose_new_word(state)
+            prior_lag = None
+            explanation = (
+                '"{}" had not appeared earlier in this run.'
+            ).format(word)
 
         answer = 'yes' if ask_seen else 'no'
         state.seen_words.add(word)
@@ -1690,6 +1751,11 @@ class RunStore:
             },
             'choices': ['yes', 'no'],
             'aliases': brain_verbal_memory.ANSWER_ALIASES,
+            'review': {
+                'was_seen': ask_seen,
+                'prior_lag': prior_lag,
+                'explanation': explanation,
+            },
         }
 
     @staticmethod
@@ -1804,6 +1870,14 @@ class RunStore:
             task_mode = 'three_feature_conjunction'
 
         state.rng.shuffle(items)
+        target_indices = [
+            index
+            for index, item in enumerate(items)
+            if item.pop('_review_target', False)
+        ]
+        if len(target_indices) != 1:
+            raise AssertionError('direction review target must be unique')
+        target_index = target_indices[0]
         rotations = [item['rotation_deg'] for item in items]
         accessible_sequence = [
             item['accessible_label']
@@ -1836,6 +1910,15 @@ class RunStore:
             },
             'choices': list(_DIRECTION_ANGLES),
             'aliases': brain_direction_focus.ANSWER_ALIASES,
+            'review': {
+                'target_index': target_index,
+                'explanation': (
+                    'Item {} is the unique target: {}.'
+                ).format(
+                    target_index + 1,
+                    accessible_sequence[target_index],
+                ),
+            },
         }
 
     @staticmethod
@@ -1862,10 +1945,12 @@ class RunStore:
             for index in range(item_count - 1)
         ]
         rotations.append(target_angle)
-        return [
+        items = [
             RunStore._direction_item(rotation, 'square', 'none')
             for rotation in rotations
         ]
+        items[-1]['_review_target'] = True
+        return items
 
     @staticmethod
     def _direction_conjunction_items(
@@ -1899,6 +1984,7 @@ class RunStore:
             target_marker,
         )
         items = [RunStore._direction_item(*target_features)]
+        items[0]['_review_target'] = True
 
         if feature_count == 2:
             counts = (
@@ -2034,6 +2120,14 @@ class RunStore:
             comparison_rule = 'grid_rotation'
             pattern_columns = 3
 
+        review = RunStore._symbol_review(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+        )
+        if review['matches'] != matches:
+            raise AssertionError('symbol review does not match answer')
         left_symbols = [token['symbol'] for token in left_tokens]
         right_symbols = [token['symbol'] for token in right_tokens]
         data = {
@@ -2056,7 +2150,113 @@ class RunStore:
             'data': data,
             'choices': ['yes', 'no'],
             'aliases': brain_symbol_match.ANSWER_ALIASES,
+            'review': review,
         }
+
+    @staticmethod
+    def _symbol_review(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+    ):
+        expected, actual = RunStore._symbol_review_values(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+        )
+        mismatch_indices = [
+            index
+            for index, pair in enumerate(zip(expected, actual))
+            if pair[0] != pair[1]
+        ]
+        matches = not mismatch_indices
+        explanation = RunStore._symbol_review_explanation(
+            comparison_rule,
+            transform_degrees,
+            mismatch_indices,
+        )
+        return {
+            'matches': matches,
+            'mismatch_indices': mismatch_indices,
+            'comparison_rule': comparison_rule,
+            'transform_degrees': transform_degrees,
+            'explanation': explanation,
+        }
+
+    @staticmethod
+    def _symbol_review_values(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+    ):
+        if comparison_rule == 'exact':
+            expected = [
+                token['symbol']
+                for token in left_tokens
+            ]
+            actual = [
+                token['symbol']
+                for token in right_tokens
+            ]
+        elif comparison_rule == 'global_rotation':
+            expected = [
+                (token['rotation_deg'] + transform_degrees) % 360
+                for token in left_tokens
+            ]
+            actual = [
+                token['rotation_deg']
+                for token in right_tokens
+            ]
+        elif comparison_rule == 'grid_rotation':
+            expected = RunStore._rotate_arrow_grid(
+                [
+                    token['rotation_deg']
+                    for token in left_tokens
+                ],
+                transform_degrees // 90,
+            )
+            actual = [
+                token['rotation_deg']
+                for token in right_tokens
+            ]
+        else:
+            raise ValueError(
+                'Unknown symbol comparison rule: {}'.format(
+                    comparison_rule,
+                ),
+            )
+        return expected, actual
+
+    @staticmethod
+    def _symbol_review_explanation(
+            comparison_rule,
+            transform_degrees,
+            mismatch_indices,
+    ):
+        if not mismatch_indices:
+            if comparison_rule == 'exact':
+                return 'Every position matches exactly.'
+            if comparison_rule == 'global_rotation':
+                return (
+                    'Every arrow matches after a {}° clockwise rotation.'
+                ).format(transform_degrees)
+            return (
+                'Every cell matches after rotating the whole grid '
+                '{}° clockwise.'
+            ).format(transform_degrees)
+
+        position_labels = ', '.join(
+            str(index + 1)
+            for index in mismatch_indices
+        )
+        noun = 'Position' if len(mismatch_indices) == 1 else 'Positions'
+        return '{} {} did not match the rule.'.format(
+            noun,
+            position_labels,
+        )
 
     @staticmethod
     def _basic_symbol_sequences(state, level, sequence_length, matches):
@@ -2288,5 +2488,11 @@ class RunStore:
                 'hint': hint,
                 'moved_positions': moved_positions,
                 'preserved_bigrams': preserved_bigrams,
+            },
+            'review': {
+                'explanation': '{} unscrambles to {}.'.format(
+                    scrambled.upper(),
+                    answer.upper(),
+                ),
             },
         }

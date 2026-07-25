@@ -133,7 +133,11 @@ class WebAppTest(unittest.TestCase):
             r'<script\b[^>]*\bnonce="([^"]+)"',
             game_document,
         )
-        self.assertEqual(3, len(script_nonces))
+        self.assertEqual(
+            len(re.findall(r'<script\b', game_document)),
+            len(script_nonces),
+        )
+        self.assertGreaterEqual(len(script_nonces), 4)
         self.assertEqual(1, len(set(script_nonces)))
         nonce = script_nonces[0]
         self.assertIn(
@@ -242,6 +246,8 @@ class WebAppTest(unittest.TestCase):
         self.assertTrue(answered['result']['correct'])
         self.assertEqual(1, answered['score'])
         self.assertEqual(3, answered['lives'])
+        self.assertTrue(answered['result']['review']['explanation'])
+        self.assertNotIn('review', answered['round'])
         self.assertNotEqual(
             first_round['round_id'],
             answered['round']['round_id'],

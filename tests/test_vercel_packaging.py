@@ -5,12 +5,14 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).parents[1]
-ASSET_NAMES = (
-    'app.js',
-    'audio.js',
-    'effects.js',
-    'main.css',
-    'theme.js',
+ASSET_PATHS = (
+    Path('app.js'),
+    Path('audio.js'),
+    Path('instrument_visuals.js'),
+    Path('main.css'),
+    Path('theme.js'),
+    Path('vendor/twgl-7.0.0.min.js'),
+    Path('vendor/twgl-LICENSE.md'),
 )
 
 
@@ -25,14 +27,16 @@ class VercelPackagingTest(unittest.TestCase):
         local_directory = PROJECT_ROOT / 'brain_games' / 'static'
         public_directory = PROJECT_ROOT / 'public' / 'static'
 
-        self.assertEqual(
-            set(ASSET_NAMES),
-            {path.name for path in public_directory.iterdir()},
-        )
-        for name in ASSET_NAMES:
+        public_assets = {
+            path.relative_to(public_directory)
+            for path in public_directory.rglob('*')
+            if path.is_file()
+        }
+        self.assertEqual(set(ASSET_PATHS), public_assets)
+        for path in ASSET_PATHS:
             self.assertEqual(
-                (local_directory / name).read_bytes(),
-                (public_directory / name).read_bytes(),
+                (local_directory / path).read_bytes(),
+                (public_directory / path).read_bytes(),
             )
 
     def test_vercel_uses_zero_config_flask_routing(self):

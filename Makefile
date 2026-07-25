@@ -1,11 +1,28 @@
+.PHONY: install test lint selfcheck build publish package-install \
+	brain-games brain-even brain-calc brain-gcd brain-progression \
+	brain-prime brain-number-memory brain-verbal-memory \
+	brain-direction-focus brain-symbol-match brain-word-scramble \
+	brain-culmination web web-check check
+
 install:
 	poetry install
 
 test:
 	poetry run python -m unittest discover -s tests -v
 
+web:
+	poetry run flask --app brain_games.app run --debug
+
+web-check:
+	node --check brain_games/static/app.js
+	node --check brain_games/static/audio.js
+	node --check brain_games/static/effects.js
+	node --check brain_games/static/theme.js
+
+check: test lint selfcheck web-check
+
 lint:
-	poetry run flake8 brain_games
+	poetry run flake8 brain_games tests
 
 selfcheck:
 	poetry check

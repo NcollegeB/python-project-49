@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+
+{% block title %}Create an account — BrainHacker{% endblock %}
+
+{% block content %}
+<section class="account-page" aria-labelledby="registerTitle">
+    <div class="account-sheet">
+        <p class="eyebrow">Save your progress</p>
+        <h1 id="registerTitle">Create an account</h1>
+        <p class="account-intro">Your username keeps your saved scores together on this BrainHacker installation.</p>
+
+        {% if error %}
+            <div class="form-alert" role="alert">{{ error }}</div>
+        {% endif %}
+        {% if errors %}
+            <div class="form-alert" role="alert">
+                <p>Please check the following:</p>
+                <ul>
+                    {% if errors is mapping %}
+                        {% for field, messages in errors.items() %}
+                            {% if messages is string %}
+                                <li>{{ messages }}</li>
+                            {% else %}
+                                {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+                            {% endif %}
+                        {% endfor %}
+                    {% elif errors is string %}
+                        <li>{{ errors }}</li>
+                    {% else %}
+                        {% for message in errors %}<li>{{ message }}</li>{% endfor %}
+                    {% endif %}
+                </ul>
+            </div>
+        {% endif %}
+
+        <form class="account-form" method="post" action="/register">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true)|e }}">
+
+            <div class="form-field">
+                <label for="username">Username</label>
+                <input id="username" name="username" type="text" minlength="3" maxlength="24"
+                       value="{{ form.username|default('', true)|e }}"
+                       autocomplete="username" autocapitalize="none" spellcheck="false"
+                       aria-describedby="usernameHint" required>
+                <p class="field-note" id="usernameHint">Use 3–24 letters, numbers, hyphens, or underscores.</p>
+            </div>
+
+            <div class="form-field">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" minlength="8"
+                       autocomplete="new-password" aria-describedby="passwordHint" required>
+                <p class="field-note" id="passwordHint">Use at least 8 characters.</p>
+            </div>
+
+            <div class="form-field">
+                <label for="confirmPassword">Confirm password</label>
+                <input id="confirmPassword" name="confirm_password" type="password" minlength="8"
+                       autocomplete="new-password" required>
+            </div>
+
+            <button class="primary-button account-submit" type="submit">Create account</button>
+        </form>
+
+        <p class="account-switch">Already have an account? <a href="/login">Log in</a>.</p>
+    </div>
+</section>
+{% endblock %}

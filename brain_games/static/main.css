@@ -1245,6 +1245,7 @@ kbd {
 .memory-matrix__grid[data-size="9"] { --matrix-size: 9; }
 
 .memory-matrix__tile {
+    position: relative;
     min-width: 0;
     padding: 0;
     border: 0;
@@ -1257,8 +1258,34 @@ kbd {
     aspect-ratio: 1;
 }
 
+.memory-matrix__submit {
+    min-width: 140px;
+    min-height: 38px;
+    padding: 0 15px;
+    border: 1px solid var(--ink);
+    border-radius: 2px;
+    background: var(--ink);
+    color: var(--sheet);
+    font: 700 0.74rem var(--sans);
+    cursor: pointer;
+}
+
+.memory-matrix__submit:disabled {
+    border-color: var(--rule-dark);
+    background: var(--soft);
+    color: var(--muted);
+    cursor: default;
+}
+
+.memory-matrix__submit:not(:disabled):hover {
+    border-color: var(--red-dark);
+    background: var(--red-dark);
+}
+
 .round-visual[data-recall-phase="preview"]
-    .memory-matrix__counter {
+    .memory-matrix__counter,
+.round-visual[data-recall-phase="preview"]
+    .memory-matrix__submit {
     visibility: hidden;
 }
 
@@ -1279,17 +1306,49 @@ kbd {
 }
 
 .round-visual[data-recall-phase="review"]
-    .memory-matrix__tile[data-review-state="answer"] {
+    .memory-matrix__tile[data-selection-outcome="correct"] {
     background: var(--correct);
     box-shadow: inset 0 0 0 3px var(--sheet);
 }
 
 .round-visual[data-recall-phase="review"]
-    .memory-matrix__tile[data-review-state="submitted"]:not(
-        [data-review-state="answer"]
-    ) {
+    .memory-matrix__tile[data-selection-outcome="missed"] {
+    background: var(--sheet);
+    box-shadow: inset 0 0 0 4px var(--correct);
+}
+
+.round-visual[data-recall-phase="review"]
+    .memory-matrix__tile[data-selection-outcome="incorrect"] {
     background: var(--error);
     box-shadow: inset 0 0 0 3px var(--sheet);
+}
+
+.round-visual[data-recall-phase="review"]
+    .memory-matrix__tile[data-selection-outcome]::after {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    font-family: var(--mono);
+    font-size: clamp(0.72rem, 3vw, 1.35rem);
+    font-weight: 900;
+    transform: translate(-50%, -50%);
+}
+
+.round-visual[data-recall-phase="review"]
+    .memory-matrix__tile[data-selection-outcome="correct"]::after {
+    color: var(--sheet);
+    content: "✓";
+}
+
+.round-visual[data-recall-phase="review"]
+    .memory-matrix__tile[data-selection-outcome="missed"]::after {
+    color: var(--correct);
+    content: "+";
+}
+
+.round-visual[data-recall-phase="review"]
+    .memory-matrix__tile[data-selection-outcome="incorrect"]::after {
+    color: var(--sheet);
+    content: "×";
 }
 
 .pinball-recall {

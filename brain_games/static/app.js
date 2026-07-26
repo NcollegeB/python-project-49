@@ -1261,6 +1261,7 @@ function annotateRecallReview(round, review) {
                 ? review.target_indices.map(Number)
                 : [],
         );
+        const selections = new Set(matrixSelection(dom.roundVisual));
         dom.roundVisual.dataset.recallPhase = 'review';
         const gridSize = Math.max(
             2,
@@ -1270,18 +1271,54 @@ function annotateRecallReview(round, review) {
             `row ${Math.floor(index / gridSize) + 1}, `
             + `column ${(index % gridSize) + 1}`
         ));
+        const incorrectLabels = Array.from(selections)
+            .filter((index) => !targets.has(index))
+            .map((index) => (
+                `row ${Math.floor(index / gridSize) + 1}, `
+                + `column ${(index % gridSize) + 1}`
+            ));
         dom.roundVisual.setAttribute(
             'aria-label',
-            `Memory Matrix review. Correct tiles: ${targetLabels.join('; ')}.`,
+            (
+                `Memory Matrix review. Correct tiles: ${
+                    targetLabels.join('; ')
+                }. Incorrect selections: ${
+                    incorrectLabels.length > 0
+                        ? incorrectLabels.join('; ')
+                        : 'none'
+                }.`
+            ),
         );
         dom.roundVisual.querySelectorAll('.memory-matrix__tile').forEach(
             (tile) => {
                 const index = Number(tile.dataset.index);
                 const selected = tile.dataset.selected === 'true';
-                if (targets.has(index)) {
+                const coordinate = (
+                    `Row ${Math.floor(index / gridSize) + 1}, column ${
+                        (index % gridSize) + 1
+                    }`
+                );
+                if (targets.has(index) && selected) {
+                    tile.dataset.selectionOutcome = 'correct';
                     tile.dataset.reviewState = 'answer';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Correct selection.`,
+                    );
+                } else if (targets.has(index)) {
+                    tile.dataset.selectionOutcome = 'missed';
+                    tile.dataset.reviewState = 'answer';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Correct tile, not selected.`,
+                    );
                 } else if (selected) {
+                    tile.dataset.selectionOutcome = 'incorrect';
                     tile.dataset.reviewState = 'submitted';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Incorrect selection.`,
+                    );
                 }
             },
         );
@@ -1921,8 +1958,16 @@ function matrixSelection(visual) {
 function updateMatrixCounter(visual, requiredCount) {
     const selectedCount = matrixSelection(visual).length;
     const counter = visual.querySelector('.memory-matrix__counter');
+    const submitButton = visual.querySelector('[data-matrix-submit="true"]');
     if (counter) {
         counter.textContent = `${selectedCount} / ${requiredCount}`;
+    }
+    if (submitButton) {
+        submitButton.disabled = (
+            visual.dataset.recallPhase !== 'answer'
+            || state.busy
+            || selectedCount !== requiredCount
+        );
     }
     if (visual.dataset.recallPhase !== 'preview') {
         visual.setAttribute(
@@ -2011,14 +2056,30 @@ function renderMemoryMatrix(round, visual) {
                 tile.setAttribute('aria-pressed', 'true');
             }
             updateMatrixCounter(visual, requiredCount);
-            const selected = matrixSelection(visual);
-            if (selected.length === requiredCount) {
-                submitAnswer(selected.join(','), tile);
-            }
         });
         grid.append(tile);
     }
-    shell.append(counter, grid);
+    const submitPattern = createTextElement(
+        'button',
+        'memory-matrix__submit',
+        'Check pattern',
+    );
+    submitPattern.type = 'button';
+    submitPattern.disabled = true;
+    submitPattern.dataset.recallControl = 'true';
+    submitPattern.dataset.matrixSubmit = 'true';
+    submitPattern.addEventListener('click', () => {
+        const selected = matrixSelection(visual);
+        if (
+            visual.dataset.recallPhase !== 'answer'
+            || state.busy
+            || selected.length !== requiredCount
+        ) {
+            return;
+        }
+        submitAnswer(selected.join(','), submitPattern);
+    });
+    shell.append(counter, grid, submitPattern);
     visual.replaceChildren(shell);
     updateMatrixCounter(visual, requiredCount);
 }
@@ -2668,6 +2729,12 @@ function revealMemoryAnswer(round) {
         ).forEach((control) => {
             control.disabled = control.dataset.nonAnswer === 'true';
         });
+        if (recallMode === 'memory_matrix') {
+            updateMatrixCounter(
+                dom.roundVisual,
+                Number(round.data?.required_count || 1),
+            );
+        }
         currentEnabledAnswerControl()?.focus({preventScroll: true});
         scheduleCountdownStart(round);
         return;
@@ -2899,8 +2966,17 @@ function setControlsDisabled(disabled) {
     });
     dom.roundVisual.querySelectorAll('[data-recall-control]').forEach(
         (control) => {
+            const matrixSubmit = control.dataset.matrixSubmit === 'true';
+            const requiredCount = Number(
+                state.round?.data?.required_count || 0,
+            );
+            const incompleteMatrix = (
+                matrixSubmit
+                && matrixSelection(dom.roundVisual).length !== requiredCount
+            );
             control.disabled = disabled
-                || control.dataset.nonAnswer === 'true';
+                || control.dataset.nonAnswer === 'true'
+                || incompleteMatrix;
         },
     );
 }

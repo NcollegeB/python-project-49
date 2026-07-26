@@ -521,6 +521,55 @@ class FrontendProgressionContractTest(unittest.TestCase):
         ):
             self.assertIn(source, self.stylesheet)
 
+    def test_memory_matrix_allows_review_before_explicit_submission(self):
+        render_block = self.javascript.split(
+            'function renderMemoryMatrix',
+            1,
+        )[1].split(
+            'function clampedUnit',
+            1,
+        )[0]
+        tile_click_block = render_block.split(
+            "tile.addEventListener('click'",
+            1,
+        )[1].split(
+            'grid.append(tile);',
+            1,
+        )[0]
+        self.assertNotIn('submitAnswer(', tile_click_block)
+        for source in (
+                "'Check pattern'",
+                "submitPattern.dataset.matrixSubmit = 'true';",
+                "submitPattern.addEventListener('click'",
+                "submitAnswer(selected.join(','), submitPattern);",
+        ):
+            self.assertIn(source, render_block)
+        review_block = self.javascript.split(
+            'function annotateRecallReview',
+            1,
+        )[1].split(
+            'function annotateReview',
+            1,
+        )[0]
+        for source in (
+                'Incorrect selections:',
+                "tile.dataset.selectionOutcome = 'correct';",
+                "tile.dataset.selectionOutcome = 'missed';",
+                "tile.dataset.selectionOutcome = 'incorrect';",
+                'Incorrect selection.',
+        ):
+            self.assertIn(source, review_block)
+        for source in (
+                '.memory-matrix__submit',
+                '[data-selection-outcome="correct"]::after',
+                '[data-selection-outcome="missed"]::after',
+                '[data-selection-outcome="incorrect"]::after',
+                'content: "✓";',
+                'content: "+";',
+                'content: "×";',
+        ):
+            self.assertIn(source, self.stylesheet)
+
     def test_direction_arrows_use_crisp_css_geometry(self):
         for source in (
                 'function renderMotionDirection(round, visual)',

@@ -45,7 +45,7 @@ def get_active_game():
 
 
 def get_question_and_answer():
-    """Choose each source game once per shuffled ten-round cycle."""
+    """Choose each source game once per shuffled 12-round cycle."""
     global _active_game
     if not _game_bag:
         _refill_game_bag()

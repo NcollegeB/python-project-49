@@ -33,8 +33,11 @@ class BenchmarkCatalogTest(unittest.TestCase):
             [game.NAME for game in CORE_GAMES] + ['Culmination Test'],
             [benchmark['name'] for benchmark in benchmarks],
         )
-        self.assertEqual(11, len(benchmarks))
-        self.assertEqual(11, len({item['slug'] for item in benchmarks}))
+        self.assertEqual(len(CORE_GAMES) + 1, len(benchmarks))
+        self.assertEqual(
+            len(CORE_GAMES) + 1,
+            len({item['slug'] for item in benchmarks}),
+        )
 
     def test_every_baseline_has_json_safe_model_metadata(self):
         expected_keys = {
@@ -100,7 +103,7 @@ class BenchmarkCatalogTest(unittest.TestCase):
 
         second = all_benchmarks()
 
-        self.assertEqual(11, len(second))
+        self.assertEqual(len(CORE_GAMES) + 1, len(second))
         self.assertEqual('Even or Odd', second[0]['name'])
 
 
@@ -126,9 +129,11 @@ class BenchmarkCalculationTest(unittest.TestCase):
             'prime': 8.9,
             'number-memory': 9.3,
             'verbal-memory': 13.3,
-            'direction-focus': 11.1,
+            'direction-focus': 11.0,
             'symbol-match': 12.3,
             'word-scramble': 8.9,
+            'memory-matrix': 9.0,
+            'pinball-recall': 8.4,
             'culmination': 9.9,
         }
         self.assertEqual(expected_averages, {

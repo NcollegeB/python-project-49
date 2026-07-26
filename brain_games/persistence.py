@@ -44,7 +44,7 @@ from brain_games.web_engine import _RunState
 from brain_games.web_engine import MAX_LIVES
 from brain_games.web_engine import MAX_PLAYER_LENGTH
 from brain_games.web_engine import RunStore
-from brain_games.web_engine import SCORE_GAME_PREFIX
+from brain_games.web_engine import RESTORABLE_TIMING_MODES
 from brain_games.web_engine import TIMING_MODES
 from brain_games.web_engine import UnknownRunError
 
@@ -399,6 +399,7 @@ def serialize_run_state(state):
         'player': state.player,
         'ranked': state.ranked,
         'timing_mode': state.timing_mode,
+        'score_ruleset': state.score_ruleset,
         'score': state.score,
         'lives': state.lives,
         'level': state.level,
@@ -415,6 +416,8 @@ def serialize_run_state(state):
         'last_source_slug': state.last_source_slug,
         'cycle_position': state.cycle_position,
         'truth_bags': copy.deepcopy(state.truth_bags),
+        'content_bags': copy.deepcopy(state.content_bags),
+        'recent_content': copy.deepcopy(state.recent_content),
         'rng_state': _serializable_rng_state(state.rng),
     }
 
@@ -519,10 +522,46 @@ def _snapshot_truth_bags_are_valid(payload):
     return True
 
 
+def _snapshot_content_memory_is_valid(payload):
+    content_bags = payload.get('content_bags', {})
+    recent_content = payload.get('recent_content', {})
+    if not isinstance(content_bags, dict):
+        return False
+    if not isinstance(recent_content, dict):
+        return False
+    return all((
+        _snapshot_content_bags_are_valid(content_bags),
+        _snapshot_recent_content_is_valid(recent_content),
+    ))
+
+
+def _snapshot_content_bags_are_valid(content_bags):
+    for key, values in content_bags.items():
+        if not isinstance(key, str) or not isinstance(values, list):
+            return False
+        if not all(
+                isinstance(value, (str, int)) and not isinstance(value, bool)
+                for value in values):
+            return False
+    return True
+
+
+def _snapshot_recent_content_is_valid(recent_content):
+    for key, values in recent_content.items():
+        if not isinstance(key, str) or not isinstance(values, list):
+            return False
+        if not all(isinstance(value, str) for value in values):
+            return False
+    return True
+
+
 def _snapshot_misc_fields_are_valid(payload):
-    if payload['timing_mode'] not in TIMING_MODES:
+    if payload['timing_mode'] not in RESTORABLE_TIMING_MODES:
         return False
     if payload['ranked'] and payload['timing_mode'] != 'standard':
+        return False
+    score_ruleset = payload.get('score_ruleset', 'r3')
+    if not isinstance(score_ruleset, str) or not score_ruleset:
         return False
     if not isinstance(payload.get('rng_state'), (list, tuple, type(None))):
         return False
@@ -545,6 +584,7 @@ def _valid_run_snapshot(payload):
         _snapshot_integers_are_valid(payload),
         _snapshot_lists_are_valid(payload),
         _snapshot_truth_bags_are_valid(payload),
+        _snapshot_content_memory_is_valid(payload),
     ))
 
 
@@ -560,6 +600,7 @@ def deserialize_run_state(payload, rng):
         rng,
         payload['ranked'],
         payload['timing_mode'],
+        payload.get('score_ruleset', 'r3'),
     )
     state.score = payload['score']
     state.lives = payload['lives']
@@ -577,6 +618,8 @@ def deserialize_run_state(payload, rng):
     state.last_source_slug = payload.get('last_source_slug')
     state.cycle_position = payload.get('cycle_position')
     state.truth_bags = copy.deepcopy(payload['truth_bags'])
+    state.content_bags = copy.deepcopy(payload.get('content_bags', {}))
+    state.recent_content = copy.deepcopy(payload.get('recent_content', {}))
     return state
 
 
@@ -605,6 +648,7 @@ class PostgresRunStore(RunStore):
             player,
             ranked=True,
             timing_mode='standard',
+            start_level=1,
     ):
         """Create and persist a new browser run."""
         slug, clean_player = self._validated_run_owner(game_slug, player)
@@ -615,7 +659,12 @@ class PostgresRunStore(RunStore):
         clean_timing_mode = timing_mode.strip().casefold()
         if clean_timing_mode not in TIMING_MODES:
             raise ValueError('timing_mode is not supported')
-        ranked = ranked and clean_timing_mode == 'standard'
+        self._validate_start_level(slug, start_level)
+        ranked = all((
+            ranked,
+            clean_timing_mode == 'standard',
+            start_level == 1,
+        ))
         state = _RunState(
             secrets.token_hex(16),
             slug,
@@ -624,6 +673,7 @@ class PostgresRunStore(RunStore):
             ranked,
             clean_timing_mode,
         )
+        state.level = start_level
         state.round = self._make_round(state)
         now = _utc_now()
         with self.engine.begin() as connection:
@@ -697,17 +747,18 @@ class PostgresRunStore(RunStore):
         )
         if same_engine:
             same_engine = self._leaderboard.engine is self.engine
+        score_prefix = '{}:'.format(state.score_ruleset)
         if same_engine:
             self._leaderboard.record_in_transaction(
                 connection,
                 state.player,
-                '{}{}'.format(SCORE_GAME_PREFIX, state.game_slug),
+                '{}{}'.format(score_prefix, state.game_slug),
                 state.score,
             )
         else:
             self._leaderboard.record(
                 state.player,
-                '{}{}'.format(SCORE_GAME_PREFIX, state.game_slug),
+                '{}{}'.format(score_prefix, state.game_slug),
                 state.score,
             )
         state.recorded = True

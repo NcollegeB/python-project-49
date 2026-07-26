@@ -16,7 +16,7 @@ web:
 web-check:
 	node --check brain_games/static/app.js
 	node --check brain_games/static/audio.js
-	node --check brain_games/static/effects.js
+	node --check brain_games/static/instrument_visuals.js
 	node --check brain_games/static/theme.js
 
 check: test lint selfcheck web-check

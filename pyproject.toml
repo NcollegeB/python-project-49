@@ -1,11 +1,11 @@
 [project]
-name = "hexlet-code"
+name = "brainhacker"
 version = "0.6.0"
-description = "BrainHacker browser tests and terminal games with fixed score benchmarks"
+description = "Browser and terminal brain games with fixed score benchmarks"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
 authors = [
-  { name = "Nikolai Gordienko", email = "nicolas.gordienko@gmail.com" },
+  { name = "Nathan Bryant", email = "123399332+NcollegeB@users.noreply.github.com" },
 ]
 classifiers = [
   "Topic :: Software Development :: Build Tools",
@@ -26,7 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/NcollegeB/python-project-49"
+Homepage = "https://brainhacker.vercel.app/"
+Repository = "https://github.com/NcollegeB/BrainHacker"
 
 [project.scripts]
 brain-games = "brain_games.scripts.brain_games:main"

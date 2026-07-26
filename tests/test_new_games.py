@@ -1,8 +1,10 @@
 from collections import Counter
+import random
 import unittest
 from unittest.mock import patch
 
 from brain_games.games import brain_direction_focus
+from brain_games.games import brain_motion_direction
 from brain_games.games import brain_number_memory
 from brain_games.games import brain_symbol_match
 from brain_games.games import brain_verbal_memory
@@ -120,15 +122,47 @@ class VerbalMemoryTest(unittest.TestCase):
 
 class DirectionFocusTest(unittest.TestCase):
 
-    def test_question_has_one_target_among_arrow_distractors(self):
-        question, answer = brain_direction_focus.get_question_and_answer()
-        target_arrow = brain_direction_focus.DIRECTIONS[answer]
-        arrow_row = question.split(': ', 1)[1]
-        arrows = arrow_row.split()
+    def test_terminal_entry_uses_motion_instead_of_an_odd_arrow(self):
+        seed = 27
+        expected = brain_motion_direction.generate_round(
+            random.Random(seed),
+            2,
+        )
+        item = expected['data']['items'][0]
+        with patch.object(
+                brain_direction_focus,
+                'random',
+                random.Random(seed)):
+            question, answer = (
+                brain_direction_focus.get_question_and_answer()
+            )
 
-        self.assertEqual(brain_direction_focus.ARROW_COUNT, len(arrows))
-        self.assertEqual(1, arrows.count(target_arrow))
-        self.assertEqual(2, len(set(arrows)))
+        self.assertEqual(expected['expected_answer'], answer)
+        self.assertNotEqual(answer, item['facing_direction'])
+        self.assertIn('Tracked arrow faces', question)
+        self.assertIn('moves from', question)
+        self.assertIn('Which way did it move?', question)
+        self.assertNotIn('odd arrow', question.casefold())
+
+    def test_browser_rounds_delegate_to_motion_generator(self):
+        delegated = brain_direction_focus.generate_round(
+            random.Random(91),
+            7,
+        )
+        direct = brain_motion_direction.generate_round(
+            random.Random(91),
+            7,
+        )
+
+        self.assertEqual(direct, delegated)
+        self.assertEqual(
+            brain_motion_direction.RULES,
+            brain_direction_focus.RULES,
+        )
+        self.assertEqual(
+            brain_motion_direction.DIRECTIONS,
+            brain_direction_focus.DIRECTIONS,
+        )
 
     def test_short_direction_aliases_are_declared(self):
         aliases = brain_direction_focus.ANSWER_ALIASES

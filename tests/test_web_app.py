@@ -9,6 +9,7 @@ from unittest.mock import patch
 from brain_games import app as app_module
 from brain_games.app import CSP
 from brain_games.app import create_app
+from brain_games.games.catalog import CORE_GAMES
 from brain_games.leaderboard import Leaderboard
 from brain_games.web_engine import RunStore
 
@@ -133,7 +134,11 @@ class WebAppTest(unittest.TestCase):
             r'<script\b[^>]*\bnonce="([^"]+)"',
             game_document,
         )
-        self.assertEqual(3, len(script_nonces))
+        self.assertEqual(
+            len(re.findall(r'<script\b', game_document)),
+            len(script_nonces),
+        )
+        self.assertGreaterEqual(len(script_nonces), 4)
         self.assertEqual(1, len(set(script_nonces)))
         nonce = script_nonces[0]
         self.assertIn(
@@ -212,10 +217,14 @@ class WebAppTest(unittest.TestCase):
         response = self.client.get('/api/games')
         payload = response.get_json()
         games = payload['games']
+        expected_count = len(CORE_GAMES) + 1
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual(11, len(games))
-        self.assertEqual(11, len({game['slug'] for game in games}))
+        self.assertEqual(expected_count, len(games))
+        self.assertEqual(
+            expected_count,
+            len({game['slug'] for game in games}),
+        )
         self.assertIn('culmination', {game['slug'] for game in games})
         self.assertFalse(FORBIDDEN_ANSWER_KEYS & nested_keys(payload))
         self.assertEqual('no-store', response.headers['Cache-Control'])
@@ -242,6 +251,8 @@ class WebAppTest(unittest.TestCase):
         self.assertTrue(answered['result']['correct'])
         self.assertEqual(1, answered['score'])
         self.assertEqual(3, answered['lives'])
+        self.assertTrue(answered['result']['review']['explanation'])
+        self.assertNotIn('review', answered['round'])
         self.assertNotEqual(
             first_round['round_id'],
             answered['round']['round_id'],
@@ -317,16 +328,11 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(409, ended.status_code)
         self.assertEqual('run_ended', ended.get_json()['error'])
 
-    def test_timing_modes_keep_assisted_runs_out_of_rankings(self):
+    def test_timing_modes_keep_self_paced_runs_out_of_rankings(self):
         standard = self.client.post('/api/runs', json={
             'game': 'even',
             'player': 'Standard',
             'timing_mode': 'standard',
-        }).get_json()
-        relaxed = self.client.post('/api/runs', json={
-            'game': 'even',
-            'player': 'Relaxed',
-            'timing_mode': 'relaxed',
         }).get_json()
         self_paced = self.client.post('/api/runs', json={
             'game': 'even',
@@ -335,18 +341,12 @@ class WebAppTest(unittest.TestCase):
         }).get_json()
 
         self.assertTrue(standard['ranked'])
-        self.assertFalse(relaxed['ranked'])
         self.assertFalse(self_paced['ranked'])
         self.assertEqual('standard', standard['timing_mode'])
-        self.assertEqual('relaxed', relaxed['timing_mode'])
         self.assertEqual('self-paced', self_paced['timing_mode'])
-        self.assertEqual(
-            standard['round']['time_limit_ms'] * 2,
-            relaxed['round']['time_limit_ms'],
-        )
         self.assertEqual(0, self_paced['round']['time_limit_ms'])
 
-        for run in (standard, relaxed, self_paced):
+        for run in (standard, self_paced):
             self.client.post(
                 '/api/runs/{}/quit'.format(run['run_id']),
             )
@@ -357,6 +357,53 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(['Standard'], [
             entry['player'] for entry in entries
         ])
+
+    def test_start_level_creates_an_unranked_practice_run(self):
+        response = self.client.post('/api/runs', json={
+            'game': 'direction-focus',
+            'player': 'Practice',
+            'timing_mode': 'standard',
+            'start_level': 9,
+        })
+        practice = response.get_json()
+
+        self.assertEqual(201, response.status_code)
+        self.assertEqual(9, practice['level'])
+        self.assertEqual(9, practice['round']['level'])
+        self.assertEqual(9, practice['round']['source_level'])
+        self.assertEqual('Spatial', practice['round']['difficulty_label'])
+        self.assertFalse(practice['ranked'])
+
+        self.client.post(
+            '/api/runs/{}/quit'.format(practice['run_id']),
+        )
+        entries = self.client.get(
+            '/api/leaderboard?game=direction-focus&limit=10',
+        ).get_json()['entries']
+        self.assertEqual([], entries)
+
+    def test_start_level_request_validation_is_game_specific(self):
+        cases = (
+            ('even', None),
+            ('even', True),
+            ('even', '2'),
+            ('even', 0),
+            ('even', 6),
+            ('direction-focus', 11),
+        )
+
+        for game, start_level in cases:
+            with self.subTest(game=game, start_level=start_level):
+                response = self.client.post('/api/runs', json={
+                    'game': game,
+                    'player': 'Practice',
+                    'start_level': start_level,
+                })
+                self.assertEqual(400, response.status_code)
+                self.assertEqual(
+                    'invalid_request',
+                    response.get_json()['error'],
+                )
 
     def test_leaderboard_hides_scores_from_the_previous_ruleset(self):
         self.store._leaderboard.record('Legacy', 'even', 999)
@@ -393,6 +440,11 @@ class WebAppTest(unittest.TestCase):
             'player': 'Ada',
             'timing_mode': [],
         })
+        removed_timing = self.client.post('/api/runs', json={
+            'game': 'even',
+            'player': 'Ada',
+            'timing_mode': 'relaxed',
+        })
         oversized = self.client.post(
             '/api/runs',
             data='x' * (17 * 1024),
@@ -408,6 +460,7 @@ class WebAppTest(unittest.TestCase):
             (bad_player, 400, 'invalid_request'),
             (bad_timing, 400, 'invalid_request'),
             (malformed_timing, 400, 'invalid_request'),
+            (removed_timing, 400, 'invalid_request'),
             (oversized, 413, 'request_too_large'),
         )
         for response, status, error_code in expected:

@@ -109,6 +109,19 @@ export class ArcadeAudio {
             click: [
                 [320, 0, 0.055, {volume: 0.018}],
             ],
+            tile: [
+                [440, 0, 0.045, {
+                    type: 'triangle',
+                    volume: 0.018,
+                }],
+            ],
+            tileWrong: [
+                [185, 0, 0.075, {
+                    type: 'triangle',
+                    volume: 0.022,
+                    slideTo: 150,
+                }],
+            ],
             start: [
                 [330, 0, 0.11, {volume: 0.028}],
                 [440, 0.085, 0.14, {volume: 0.032}],

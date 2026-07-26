@@ -4,7 +4,9 @@ from brain_games.games import brain_calc
 from brain_games.games import brain_direction_focus
 from brain_games.games import brain_even
 from brain_games.games import brain_gcd
+from brain_games.games import brain_memory_matrix
 from brain_games.games import brain_number_memory
+from brain_games.games import brain_pinball_recall
 from brain_games.games import brain_prime
 from brain_games.games import brain_progression
 from brain_games.games import brain_symbol_match
@@ -23,4 +25,6 @@ CORE_GAMES = (
     brain_direction_focus,
     brain_symbol_match,
     brain_word_scramble,
+    brain_memory_matrix,
+    brain_pinball_recall,
 )

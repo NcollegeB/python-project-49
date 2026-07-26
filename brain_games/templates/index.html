@@ -75,26 +75,37 @@
                 <p class="eyebrow">Instructions</p>
                 <h2 id="briefingTitle">Prepare to focus</h2>
                 <p id="briefingDescription">Your first round begins when you are ready.</p>
-                <fieldset class="timing-selector" id="timingMode">
-                    <legend>Choose your pace</legend>
-                    <div class="timing-options">
-                        <label class="timing-option">
-                            <input type="radio" name="timing-mode" value="standard" checked>
-                            <span class="timing-option__name">Standard</span>
-                            <span class="timing-option__detail">Ranked · calibrated limits</span>
-                        </label>
-                        <label class="timing-option">
-                            <input type="radio" name="timing-mode" value="relaxed">
-                            <span class="timing-option__name">Relaxed · 2× answer time</span>
-                            <span class="timing-option__detail">Practice score; memory previews stay fixed</span>
-                        </label>
-                        <label class="timing-option">
-                            <input type="radio" name="timing-mode" value="self-paced">
-                            <span class="timing-option__name">Self-paced · No answer deadline</span>
-                            <span class="timing-option__detail">Practice score; memory previews stay fixed</span>
-                        </label>
-                    </div>
-                </fieldset>
+                <div class="briefing-controls">
+                    <fieldset class="level-selector" id="levelSelector">
+                        <legend>Starting level</legend>
+                        <div class="level-options" id="levelOptions"></div>
+                    </fieldset>
+                    <p class="practice-level-note" id="practiceLevelNote"
+                       role="status" aria-live="polite" aria-atomic="true">
+                        Level 1 starts a full ranked test.
+                    </p>
+                    <fieldset class="timing-selector" id="timingMode">
+                        <legend>Choose your pace</legend>
+                        <div class="timing-options">
+                            <label class="timing-option">
+                                <input type="radio" name="timing-mode"
+                                       value="standard" checked>
+                                <span class="timing-option__name">Regular</span>
+                                <span class="timing-option__detail">
+                                    Ranked · calibrated limits
+                                </span>
+                            </label>
+                            <label class="timing-option">
+                                <input type="radio" name="timing-mode"
+                                       value="self-paced">
+                                <span class="timing-option__name">Relaxed</span>
+                                <span class="timing-option__detail">
+                                    Practice · no answer deadline
+                                </span>
+                            </label>
+                        </div>
+                    </fieldset>
+                </div>
                 <p class="briefing-feedback" id="briefingFeedback"
                    role="alert" hidden></p>
                 <button class="primary-button start-run-button" id="startRunButton" type="button">
@@ -144,7 +155,14 @@
                     </div>
                 </form>
 
-                <div class="feedback-region" id="feedbackRegion" role="status" aria-live="polite" aria-atomic="true"></div>
+                <div class="feedback-tray">
+                    <div class="feedback-region" id="feedbackRegion"
+                         role="status" aria-live="polite" aria-atomic="true"></div>
+                    <button class="feedback-continue" id="reviewContinue"
+                            type="button" hidden disabled>
+                        Continue ↵
+                    </button>
+                </div>
             </section>
 
             <section class="result-state" id="resultState" aria-labelledby="resultHeading" hidden>
@@ -235,5 +253,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='vendor/twgl-7.0.0.min.js') }}"></script>
 <script nonce="{{ csp_nonce }}" type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

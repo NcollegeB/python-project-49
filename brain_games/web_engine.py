@@ -6,6 +6,10 @@ that concurrent browser sessions cannot affect one another.
 """
 
 import copy
+from hashlib import blake2s
+from itertools import permutations
+from itertools import product
+import json
 from math import ceil
 from math import gcd
 from math import isqrt
@@ -30,7 +34,10 @@ from brain_games.games import brain_calc
 from brain_games.games import brain_direction_focus
 from brain_games.games import brain_even
 from brain_games.games import brain_gcd
+from brain_games.games import brain_memory_matrix
+from brain_games.games import brain_motion_direction
 from brain_games.games import brain_number_memory
+from brain_games.games import brain_pinball_recall
 from brain_games.games import brain_prime
 from brain_games.games import brain_progression
 from brain_games.games import brain_symbol_match
@@ -44,9 +51,12 @@ MAX_LIVES = 3
 CULMINATION_SLUG = 'culmination'
 DEFAULT_MAX_RUNS = 512
 MAX_PLAYER_LENGTH = 64
-SCORE_RULESET = 'r3'
+SCORE_RULESET = 'r4'
 SCORE_GAME_PREFIX = '{}:'.format(SCORE_RULESET)
-TIMING_MODES = ('standard', 'relaxed', 'self-paced')
+TIMING_MODES = ('standard', 'self-paced')
+RESTORABLE_TIMING_MODES = TIMING_MODES + ('relaxed',)
+RECENT_CONTENT_LIMIT = 4
+ROUND_GENERATION_ATTEMPTS = 8
 
 
 class UnknownGameError(LookupError):
@@ -147,19 +157,29 @@ GAME_CATALOG = (
         'Aa',
     ),
     _catalog_entry(
-        brain_direction_focus,
-        'Find the unique direction, frame, or marker combination.',
+        brain_motion_direction,
+        'Track marked motion while arrow facings try to distract you.',
         '→',
     ),
     _catalog_entry(
         brain_symbol_match,
-        'Compare symbols, arrow sequences, and rotated grids.',
+        'Compare symbols, rotated grids, and 3D cube solids.',
         '◇',
     ),
     _catalog_entry(
         brain_word_scramble,
         'Rearrange shuffled letters into the original word.',
         'ABC',
+    ),
+    _catalog_entry(
+        brain_memory_matrix,
+        'Memorize highlighted tiles, then rebuild the pattern.',
+        '▦',
+    ),
+    _catalog_entry(
+        brain_pinball_recall,
+        'Memorize mirrors, then trace the hidden pinball route.',
+        '◩',
     ),
     {
         'slug': CULMINATION_SLUG,
@@ -168,7 +188,7 @@ GAME_CATALOG = (
         'rules': (
             'Every round comes from a different BrainHacker test.'
         ),
-        'description': 'Take on all ten challenges in shuffled cycles.',
+        'description': 'Take on all twelve challenges in shuffled cycles.',
         'icon': '★',
         'max_level': max_level_for(CULMINATION_SLUG),
     },
@@ -275,6 +295,80 @@ _DIRECTION_ANGLES = {
     'down': 180,
     'left': 270,
 }
+
+_SPATIAL_DIRECTIONS = {
+    'up': {
+        'vector': (0, 1, 0),
+        'glyph': '↑',
+        'label': 'up',
+    },
+    'right': {
+        'vector': (1, 0, 0),
+        'glyph': '→',
+        'label': 'right',
+    },
+    'down': {
+        'vector': (0, -1, 0),
+        'glyph': '↓',
+        'label': 'down',
+    },
+    'left': {
+        'vector': (-1, 0, 0),
+        'glyph': '←',
+        'label': 'left',
+    },
+    'toward': {
+        'vector': (0, 0, 1),
+        'glyph': '⊙',
+        'label': 'toward you',
+    },
+    'away': {
+        'vector': (0, 0, -1),
+        'glyph': '⊗',
+        'label': 'away from you',
+    },
+}
+
+_CUBE_NEIGHBOURS = (
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+)
+
+
+def _permutation_sign(indices):
+    inversions = sum(
+        indices[first] > indices[second]
+        for first in range(len(indices))
+        for second in range(first + 1, len(indices))
+    )
+    return -1 if inversions % 2 else 1
+
+
+def _build_cube_rotations():
+    """Return the 24 orientation-preserving symmetries of a cube."""
+    rotations = []
+    for axes in permutations(range(3)):
+        axis_sign = _permutation_sign(axes)
+        for signs in product((-1, 1), repeat=3):
+            if axis_sign * signs[0] * signs[1] * signs[2] != 1:
+                continue
+            rotations.append(tuple(
+                tuple(
+                    signs[row] if column == axes[row] else 0
+                    for column in range(3)
+                )
+                for row in range(3)
+            ))
+    if len(rotations) != 24:
+        raise RuntimeError('cube rotation table must contain 24 entries')
+    return tuple(rotations)
+
+
+_CUBE_ROTATIONS = _build_cube_rotations()
 
 _SYMBOL_TOKENS = {
     '○': {
@@ -605,6 +699,7 @@ class _RunState:
             rng,
             ranked=True,
             timing_mode='standard',
+            score_ruleset=SCORE_RULESET,
     ):
         self.run_id = run_id
         self.game_slug = game_slug
@@ -612,6 +707,7 @@ class _RunState:
         self.rng = rng
         self.ranked = ranked
         self.timing_mode = timing_mode
+        self.score_ruleset = score_ruleset
         self.score = 0
         self.lives = MAX_LIVES
         self.level = 1
@@ -630,6 +726,8 @@ class _RunState:
         self.last_source_slug = None
         self.cycle_position = None
         self.truth_bags = {}
+        self.content_bags = {}
+        self.recent_content = {}
 
 
 class RunStore:
@@ -661,6 +759,7 @@ class RunStore:
             player,
             ranked=True,
             timing_mode='standard',
+            start_level=1,
     ):
         """Create a run and return its first public round."""
         slug, clean_player = self._validated_run_owner(game_slug, player)
@@ -675,7 +774,12 @@ class RunStore:
                     ', '.join(TIMING_MODES),
                 ),
             )
-        ranked = ranked and clean_timing_mode == 'standard'
+        self._validate_start_level(slug, start_level)
+        ranked = all((
+            ranked,
+            clean_timing_mode == 'standard',
+            start_level == 1,
+        ))
         with self._lock:
             state = _RunState(
                 _new_id(),
@@ -685,6 +789,7 @@ class RunStore:
                 ranked,
                 clean_timing_mode,
             )
+            state.level = start_level
             state.round = self._make_round(state)
             self._make_room_for_run()
             self._runs[state.run_id] = state
@@ -749,7 +854,14 @@ class RunStore:
 
     @staticmethod
     def _validate_rng(rng):
-        methods = ('choice', 'randint', 'randrange', 'sample', 'shuffle')
+        methods = (
+            'choice',
+            'randint',
+            'randrange',
+            'sample',
+            'shuffle',
+            'uniform',
+        )
         if any(not callable(getattr(rng, name, None)) for name in methods):
             raise TypeError('random_factory must return a random-like object')
 
@@ -772,6 +884,16 @@ class RunStore:
             return self._runs[run_id]
         except (KeyError, TypeError):
             raise UnknownRunError(run_id)
+
+    @staticmethod
+    def _validate_start_level(game_slug, start_level):
+        if isinstance(start_level, bool) or not isinstance(start_level, int):
+            raise TypeError('start_level must be an integer')
+        max_level = max_level_for(game_slug)
+        if not 1 <= start_level <= max_level:
+            raise ValueError(
+                'start_level must be between 1 and {}'.format(max_level),
+            )
 
     def _answer_state(self, state, round_id, answer):
         if state.ended:
@@ -858,6 +980,7 @@ class RunStore:
             'level_before': level_before,
             'level_after': level_after,
             'leveled_up': leveled_up,
+            'review': copy.deepcopy(active_round.get('review', {})),
         }
 
     def _quit_state(self, state):
@@ -871,9 +994,10 @@ class RunStore:
         if state.recorded:
             return
         if state.ranked:
+            score_prefix = '{}:'.format(state.score_ruleset)
             self._leaderboard.record(
                 state.player,
-                '{}{}'.format(SCORE_GAME_PREFIX, state.game_slug),
+                '{}{}'.format(score_prefix, state.game_slug),
                 state.score,
             )
         state.recorded = True
@@ -942,7 +1066,7 @@ class RunStore:
             cycle_total = None
 
         source_level = min(state.level, max_level_for(source_slug))
-        generated = self._generate_source_round(
+        generated = self._generate_nonrepeating_round(
             state,
             source_slug,
             source_level,
@@ -983,7 +1107,88 @@ class RunStore:
             'aliases': dict(generated.get('aliases', {})),
             'choices': choices,
             'source_slug': source_slug,
+            'review': copy.deepcopy(generated.get('review', {})),
         }
+
+    def _generate_nonrepeating_round(self, state, source_slug, level):
+        """Avoid accidental recent question repeats without changing rules."""
+        if source_slug == brain_verbal_memory.SLUG:
+            return self._generate_source_round(state, source_slug, level)
+
+        checkpoint = self._generation_checkpoint(state)
+        recent = state.recent_content.setdefault(source_slug, [])
+        generated = None
+        signature = None
+        for attempt in range(ROUND_GENERATION_ATTEMPTS):
+            if attempt:
+                self._restore_generation_checkpoint(state, checkpoint)
+            generated = self._generate_source_round(
+                state,
+                source_slug,
+                level,
+            )
+            signature = self._round_content_signature(
+                source_slug,
+                generated,
+            )
+            if signature not in recent:
+                break
+
+        recent.append(signature)
+        del recent[:-RECENT_CONTENT_LIMIT]
+        return generated
+
+    @staticmethod
+    def _generation_checkpoint(state):
+        return {
+            'truth_bags': copy.deepcopy(state.truth_bags),
+        }
+
+    @staticmethod
+    def _restore_generation_checkpoint(state, checkpoint):
+        state.truth_bags = copy.deepcopy(checkpoint['truth_bags'])
+
+    @staticmethod
+    def _round_content_signature(source_slug, generated):
+        if source_slug == brain_word_scramble.SLUG:
+            payload = {'answer': generated['expected_answer']}
+        elif source_slug == brain_number_memory.SLUG:
+            payload = {'number': generated['prompt']}
+        elif source_slug == brain_prime.SLUG:
+            payload = {'number': generated['data']['number']}
+        elif source_slug == brain_gcd.SLUG:
+            payload = {
+                'numbers': sorted(generated['data']['numbers']),
+            }
+        else:
+            payload = {
+                'prompt': generated['prompt'],
+                'data': RunStore._content_only_data(generated),
+            }
+        serialised = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=False,
+        )
+        return blake2s(
+            serialised.encode('utf-8'),
+            digest_size=16,
+        ).hexdigest()
+
+    @staticmethod
+    def _content_only_data(generated):
+        public_data = copy.deepcopy(generated.get('data', {}))
+        for decorative_key in (
+                'spin_axis',
+                'spin_phase_deg',
+                'spin_speed_deg_s'):
+            public_data.pop(decorative_key, None)
+        for item in public_data.get('items', ()):
+            if isinstance(item, dict):
+                item.pop('spin_phase_deg', None)
+                item.pop('spin_speed_deg_s', None)
+        return public_data
 
     @staticmethod
     def _scaled_time_limit(base_time_limit_ms, timing_mode):
@@ -1026,11 +1231,41 @@ class RunStore:
             brain_prime.SLUG: self._generate_prime,
             brain_number_memory.SLUG: self._generate_number_memory,
             brain_verbal_memory.SLUG: self._generate_verbal_memory,
-            brain_direction_focus.SLUG: self._generate_direction_focus,
+            brain_motion_direction.SLUG: self._generate_motion_direction,
             brain_symbol_match.SLUG: self._generate_symbol_match,
             brain_word_scramble.SLUG: self._generate_word_scramble,
+            brain_memory_matrix.SLUG: self._generate_memory_matrix,
+            brain_pinball_recall.SLUG: self._generate_pinball_recall,
         }
         return generators[source_slug](state, level)
+
+    @staticmethod
+    def _generate_motion_direction(state, level=None):
+        effective_level = state.level if level is None else level
+        return brain_motion_direction.generate_round(
+            state.rng,
+            effective_level,
+        )
+
+    @staticmethod
+    def _generate_memory_matrix(state, level=None):
+        effective_level = state.level if level is None else level
+        return brain_memory_matrix.generate_round(
+            state.rng,
+            effective_level,
+        )
+
+    @staticmethod
+    def _generate_pinball_recall(state, level=None):
+        effective_level = state.level if level is None else level
+        generated = brain_pinball_recall.generate_round(
+            state.rng,
+            effective_level,
+        )
+        generated['review']['explanation'] = (
+            'The ball exited at {} along the highlighted path.'
+        ).format(generated['expected_answer'])
+        return generated
 
     @staticmethod
     def _next_balanced_truth(state, source_slug, level=None):
@@ -1038,7 +1273,17 @@ class RunStore:
         key = '{}:{}'.format(source_slug, effective_level)
         bag = state.truth_bags.setdefault(key, [])
         if not bag:
-            bag.extend((True, False))
+            bag.extend([True] * 5)
+            bag.extend([False] * 5)
+            state.rng.shuffle(bag)
+        return bag.pop()
+
+    @staticmethod
+    def _next_content(state, key, values):
+        """Draw without replacement from a persisted, shuffled content bag."""
+        bag = state.content_bags.setdefault(key, [])
+        if not bag:
+            bag.extend(values)
             state.rng.shuffle(bag)
         return bag.pop()
 
@@ -1071,6 +1316,13 @@ class RunStore:
             'data': data,
             'choices': ['yes', 'no'],
             'aliases': brain_even.ANSWER_ALIASES,
+            'review': {
+                'parity': 'even' if wants_even else 'odd',
+                'explanation': '{} has an {} result.'.format(
+                    expression,
+                    'even' if wants_even else 'odd',
+                ),
+            },
         }
 
     @staticmethod
@@ -1191,6 +1443,9 @@ class RunStore:
             'data': {
                 'expression': expression,
                 'template': template,
+            },
+            'review': {
+                'explanation': '{} = {}.'.format(expression, answer),
             },
         }
 
@@ -1410,6 +1665,13 @@ class RunStore:
             'prompt': '{} {}'.format(first, second),
             'expected_answer': str(answer),
             'data': {'numbers': [first, second]},
+            'review': {
+                'explanation': 'The GCD of {} and {} is {}.'.format(
+                    first,
+                    second,
+                    answer,
+                ),
+            },
         }
 
     @staticmethod
@@ -1517,6 +1779,14 @@ class RunStore:
                 'pattern': pattern,
                 'pattern_label': pattern_label,
             },
+            'review': {
+                'hidden_index': hidden_index,
+                'pattern': pattern,
+                'explanation': '{}; the missing term is {}.'.format(
+                    pattern_label,
+                    answer,
+                ),
+            },
         }
 
     @staticmethod
@@ -1611,7 +1881,23 @@ class RunStore:
             brain_prime.SLUG,
             level,
         )
-        number = state.rng.choice(_PRIME_POOLS[level][is_prime])
+        number = RunStore._next_content(
+            state,
+            'prime:{}:{}'.format(level, int(is_prime)),
+            _PRIME_POOLS[level][is_prime],
+        )
+        if is_prime:
+            explanation = (
+                '{} has no divisors other than 1 and itself.'
+            ).format(number)
+            factor = None
+        else:
+            factor = _smallest_prime_factor(number)
+            explanation = '{} = {} × {}.'.format(
+                number,
+                factor,
+                number // factor,
+            )
         return {
             'kind': 'choice',
             'prompt': 'Is {} prime?'.format(number),
@@ -1619,6 +1905,11 @@ class RunStore:
             'data': {'number': number},
             'choices': ['yes', 'no'],
             'aliases': brain_prime.ANSWER_ALIASES,
+            'review': {
+                'is_prime': is_prime,
+                'factor': factor,
+                'explanation': explanation,
+            },
         }
 
     @staticmethod
@@ -1639,6 +1930,9 @@ class RunStore:
             'preview_ms': number_memory_preview_ms(digits),
             'time_limit_ms': 0,
             'hidden_prompt': brain_number_memory.HIDDEN_QUESTION,
+            'review': {
+                'explanation': 'The number was {}.'.format(number),
+            },
         }
 
     @staticmethod
@@ -1667,8 +1961,22 @@ class RunStore:
             ask_seen = False
         if ask_seen:
             word = state.rng.choice(repeat_words)
+            prior_lag = next(
+                len(state.word_history) - index
+                for index in range(len(state.word_history) - 1, -1, -1)
+                if state.word_history[index] == word
+            )
+            explanation = '"{}" appeared {} prompt{} ago.'.format(
+                word,
+                prior_lag,
+                '' if prior_lag == 1 else 's',
+            )
         else:
             word = RunStore._choose_new_word(state)
+            prior_lag = None
+            explanation = (
+                '"{}" had not appeared earlier in this run.'
+            ).format(word)
 
         answer = 'yes' if ask_seen else 'no'
         state.seen_words.add(word)
@@ -1690,6 +1998,11 @@ class RunStore:
             },
             'choices': ['yes', 'no'],
             'aliases': brain_verbal_memory.ANSWER_ALIASES,
+            'review': {
+                'was_seen': ask_seen,
+                'prior_lag': prior_lag,
+                'explanation': explanation,
+            },
         }
 
     @staticmethod
@@ -1728,10 +2041,20 @@ class RunStore:
     @staticmethod
     def _choose_new_word(state):
         while True:
-            word = RunStore._verbal_term_for_index(
-                state.new_word_index,
-            )
-            state.new_word_index += 1
+            bag = state.content_bags.setdefault('verbal-memory:new', [])
+            if not bag:
+                batch_start = state.new_word_index
+                batch_size = 64
+                bag.extend(
+                    RunStore._verbal_term_for_index(index)
+                    for index in range(
+                        batch_start,
+                        batch_start + batch_size,
+                    )
+                )
+                state.new_word_index += batch_size
+                state.rng.shuffle(bag)
+            word = bag.pop()
             if word not in state.seen_words:
                 return word
 
@@ -1754,13 +2077,16 @@ class RunStore:
     @staticmethod
     def _generate_direction_focus(state, level=None):
         level = state.level if level is None else level
+        if level >= 9:
+            return RunStore._generate_spatial_direction(state, level)
+
         level_index = level - 1
         item_count = DIRECTION_ITEM_COUNTS[level_index]
         difference = DIRECTION_DIFFERENCES_DEG[level_index]
         target = state.rng.choice(tuple(_DIRECTION_ANGLES))
         target_angle = _DIRECTION_ANGLES[target]
 
-        if level <= 4:
+        if level <= 2:
             items = RunStore._direction_orientation_items(
                 state,
                 level,
@@ -1772,7 +2098,7 @@ class RunStore:
             instruction = 'Which way does the odd arrow point?'
             prompt = 'Find the one arrow pointing in a different direction.'
             task_mode = 'orientation'
-        elif level <= 6:
+        elif level <= 4:
             items = RunStore._direction_conjunction_items(
                 state,
                 item_count,
@@ -1804,6 +2130,14 @@ class RunStore:
             task_mode = 'three_feature_conjunction'
 
         state.rng.shuffle(items)
+        target_indices = [
+            index
+            for index, item in enumerate(items)
+            if item.pop('_review_target', False)
+        ]
+        if len(target_indices) != 1:
+            raise AssertionError('direction review target must be unique')
+        target_index = target_indices[0]
         rotations = [item['rotation_deg'] for item in items]
         accessible_sequence = [
             item['accessible_label']
@@ -1824,6 +2158,9 @@ class RunStore:
                 'item_count': item_count,
                 'grid_columns': isqrt(item_count - 1) + 1,
                 'target_difference_deg': difference,
+                'orientation_step_deg': (
+                    90 if feature_count >= 2 else difference
+                ),
                 'distractor_orientation_count': len(set(
                     rotation
                     for rotation in rotations
@@ -1836,6 +2173,15 @@ class RunStore:
             },
             'choices': list(_DIRECTION_ANGLES),
             'aliases': brain_direction_focus.ANSWER_ALIASES,
+            'review': {
+                'target_index': target_index,
+                'explanation': (
+                    'Item {} is the unique target: {}.'
+                ).format(
+                    target_index + 1,
+                    accessible_sequence[target_index],
+                ),
+            },
         }
 
     @staticmethod
@@ -1862,25 +2208,29 @@ class RunStore:
             for index in range(item_count - 1)
         ]
         rotations.append(target_angle)
-        return [
+        items = [
             RunStore._direction_item(rotation, 'square', 'none')
             for rotation in rotations
         ]
+        items[-1]['_review_target'] = True
+        return items
 
     @staticmethod
-    def _direction_conjunction_items(
+    def _direction_conjunction_items(  # noqa: C901
             state,
             item_count,
             target_angle,
             difference,
             feature_count,
     ):
-        clockwise_angle = (
-            target_angle + (state.rng.choice((-1, 1)) * difference)
-        ) % 360
-        counter_angle = (
-            target_angle - (clockwise_angle - target_angle)
-        ) % 360
+        if difference != 90:
+            raise ValueError('conjunction directions must be 90° apart')
+        other_angles = [
+            (target_angle + offset) % 360
+            for offset in (90, 180, 270)
+        ]
+        state.rng.shuffle(other_angles)
+        angles = [target_angle] + other_angles
         target_frame = state.rng.choice(('round', 'square'))
         alternate_frame = (
             'square' if target_frame == 'round' else 'round'
@@ -1893,47 +2243,280 @@ class RunStore:
         alternate_marker = (
             'none' if target_marker == 'dot' else 'dot'
         )
-        target_features = (
-            target_angle,
-            target_frame,
-            target_marker,
-        )
-        items = [RunStore._direction_item(*target_features)]
-
         if feature_count == 2:
-            counts = (
-                (7, 5, 3, 6, 2)
-                if item_count == 24
-                else (11, 8, 4, 9, 3)
-            )
-            combinations = (
-                (target_angle, alternate_frame, target_marker),
-                (clockwise_angle, target_frame, target_marker),
-                (clockwise_angle, alternate_frame, target_marker),
-                (counter_angle, target_frame, target_marker),
-                (counter_angle, alternate_frame, target_marker),
-            )
+            templates = {
+                16: ((1, 3), [(2, 2), (2, 2), (2, 2)]),
+                24: ((1, 5), [(3, 3), (4, 2), (4, 2)]),
+                36: ((1, 8), [(5, 4), (6, 3), (6, 3)]),
+            }
+            target_row, non_target_rows = templates[item_count]
+            state.rng.shuffle(non_target_rows)
+            count_rows = [
+                target_row,
+                *non_target_rows,
+            ]
+            items = []
+            for direction_index, (target_count, alternate_count) in (
+                    enumerate(count_rows)):
+                angle = angles[direction_index]
+                target_items = [
+                    RunStore._direction_item(
+                        angle,
+                        target_frame,
+                        target_marker,
+                    )
+                    for _index in range(target_count)
+                ]
+                if direction_index == 0:
+                    target_items[0]['_review_target'] = True
+                items.extend(target_items)
+                items.extend(
+                    RunStore._direction_item(
+                        angle,
+                        alternate_frame,
+                        target_marker,
+                    )
+                    for _index in range(alternate_count)
+                )
         else:
-            alternate_angle = clockwise_angle
-            combinations = (
-                (target_angle, target_frame, alternate_marker),
-                (target_angle, alternate_frame, target_marker),
-                (alternate_angle, target_frame, target_marker),
-                (target_angle, alternate_frame, alternate_marker),
-                (alternate_angle, target_frame, alternate_marker),
-                (alternate_angle, alternate_frame, target_marker),
-                (alternate_angle, alternate_frame, alternate_marker),
-            )
-            counts = (6, 6, 6, 5, 5, 5, 2)
+            if item_count == 24:
+                non_target_rows = [
+                    (0, 2, 2, 2),
+                    (0, 3, 3, 0),
+                    (6, 0, 0, 0),
+                ]
+                state.rng.shuffle(non_target_rows)
+                count_rows = [
+                    (1, 0, 0, 5),
+                    *non_target_rows,
+                ]
+                counts = {
+                    (
+                        direction,
+                        cell // 2,
+                        cell % 2,
+                    ): count
+                    for direction, row in enumerate(count_rows)
+                    for cell, count in enumerate(row)
+                }
+            else:
+                counts = {
+                    (direction, frame, marker): 2
+                    for direction in range(4)
+                    for frame in range(2)
+                    for marker in range(2)
+                }
+                counts[(0, 0, 0)] = 1
+                for key in (
+                    (0, 0, 1),
+                    (0, 1, 0),
+                    (1, 0, 0),
+                    (2, 0, 1),
+                    (3, 1, 0),
+                ):
+                    counts[key] += 1
+            frames = (target_frame, alternate_frame)
+            markers = (target_marker, alternate_marker)
+            items = []
+            for indices, count in counts.items():
+                direction_index, frame_index, marker_index = indices
+                generated = [
+                    RunStore._direction_item(
+                        angles[direction_index],
+                        frames[frame_index],
+                        markers[marker_index],
+                    )
+                    for _index in range(count)
+                ]
+                if indices == (0, 0, 0):
+                    generated[0]['_review_target'] = True
+                items.extend(generated)
 
-        for features, count in zip(combinations, counts):
-            items.extend(
-                RunStore._direction_item(*features)
-                for _index in range(count)
-            )
         if len(items) != item_count:
             raise AssertionError('direction conjunction size mismatch')
         return items
+
+    @staticmethod
+    def _generate_spatial_direction(state, level):  # noqa: C901
+        direction_names = tuple(_SPATIAL_DIRECTIONS)
+        item_count = DIRECTION_ITEM_COUNTS[level - 1]
+        occurrences = item_count // len(direction_names)
+        target_direction = state.rng.choice(direction_names)
+        direction_pool = [
+            direction
+            for direction in direction_names
+            for _index in range(occurrences)
+        ]
+        direction_pool.remove(target_direction)
+        state.rng.shuffle(direction_pool)
+
+        if level == 9:
+            profiles = ['triangular', 'square', 'octagonal']
+            state.rng.shuffle(profiles)
+            head_styles = ['narrow', 'wide']
+            state.rng.shuffle(head_styles)
+            target_features = (
+                profiles[0],
+                head_styles[0],
+                'long',
+            )
+            non_target_rows = [(5, 3), (6, 2)]
+            state.rng.shuffle(non_target_rows)
+            count_rows = (
+                (1, 7),
+                *non_target_rows,
+            )
+            remaining_features = []
+            feature_counts = []
+            for profile_index, row in enumerate(count_rows):
+                for head_index, count in enumerate(row):
+                    features = (
+                        profiles[profile_index],
+                        head_styles[head_index],
+                        'long',
+                    )
+                    if features == target_features:
+                        continue
+                    remaining_features.append(features)
+                    feature_counts.append(count)
+            feature_count = 2
+            instruction = (
+                'One arrow has a unique profile and head width. '
+                'Which direction is it pointing?'
+            )
+        else:
+            profiles = ['triangular', 'square', 'octagonal']
+            state.rng.shuffle(profiles)
+            head_styles = ['narrow', 'wide']
+            state.rng.shuffle(head_styles)
+            shaft_styles = ['short', 'long']
+            state.rng.shuffle(shaft_styles)
+            target_features = (
+                profiles[0],
+                head_styles[0],
+                shaft_styles[0],
+            )
+            count_rows = (
+                (1, 2, 2, 3),
+                (2, 3, 3, 0),
+                (2, 2, 2, 2),
+            )
+            remaining_features = []
+            feature_counts = []
+            for profile_index, row in enumerate(count_rows):
+                for cell_index, count in enumerate(row):
+                    features = (
+                        profiles[profile_index],
+                        head_styles[cell_index // 2],
+                        shaft_styles[cell_index % 2],
+                    )
+                    if features == target_features:
+                        continue
+                    if count:
+                        remaining_features.append(features)
+                        feature_counts.append(count)
+            feature_count = 3
+            instruction = (
+                'One arrow has a unique profile, head width, and shaft '
+                'length. Which direction is it pointing?'
+            )
+
+        feature_pool = []
+        for features, count in zip(remaining_features, feature_counts):
+            feature_pool.extend([features] * count)
+        state.rng.shuffle(feature_pool)
+
+        target_item = RunStore._spatial_direction_item(
+            state,
+            target_direction,
+            target_features,
+        )
+        target_item['_review_target'] = True
+        items = [target_item]
+        items.extend(
+            RunStore._spatial_direction_item(
+                state,
+                direction,
+                features,
+            )
+            for direction, features in zip(direction_pool, feature_pool)
+        )
+        if len(items) != item_count:
+            raise AssertionError('spatial direction size mismatch')
+        state.rng.shuffle(items)
+        target_indices = [
+            index
+            for index, item in enumerate(items)
+            if item.pop('_review_target', False)
+        ]
+        if len(target_indices) != 1:
+            raise AssertionError('spatial direction target must be unique')
+        target_index = target_indices[0]
+        choices = list(direction_names)
+        return {
+            'kind': 'direction',
+            'prompt': instruction,
+            'expected_answer': target_direction,
+            'data': {
+                'render_mode': 'direction_3d',
+                'items': items,
+                'item_count': item_count,
+                'grid_columns': 6,
+                'feature_count': feature_count,
+                'task_mode': (
+                    'spatial_profile_head'
+                    if level == 9
+                    else 'spatial_profile_head_shaft'
+                ),
+                'instruction': instruction,
+                'accessible_instruction': instruction,
+                'accessible_sequence': [
+                    item['accessible_label']
+                    for item in items
+                ],
+                'direction_counts': {
+                    direction: occurrences
+                    for direction in direction_names
+                },
+                'animation': 'longitudinal_rotation',
+            },
+            'choices': choices,
+            'aliases': brain_direction_focus.ANSWER_ALIASES,
+            'review': {
+                'target_index': target_index,
+                'explanation': (
+                    'Item {} is the unique 3D target: {}.'
+                ).format(
+                    target_index + 1,
+                    items[target_index]['accessible_label'],
+                ),
+            },
+        }
+
+    @staticmethod
+    def _spatial_direction_item(state, direction, features):
+        profile, head_style, shaft_style = features
+        direction_data = _SPATIAL_DIRECTIONS[direction]
+        return {
+            'direction': direction,
+            'direction_vector': list(direction_data['vector']),
+            'glyph': direction_data['glyph'],
+            'profile': profile,
+            'head_style': head_style,
+            'shaft_style': shaft_style,
+            'spin_phase_deg': state.rng.randrange(360),
+            'spin_speed_deg_s': state.rng.choice(
+                (-1, 1),
+            ) * state.rng.randint(7, 13),
+            'accessible_label': (
+                '{} profile, {} head, {} shaft, arrow pointing {}'
+            ).format(
+                profile,
+                head_style,
+                shaft_style,
+                direction_data['label'],
+            ),
+        }
 
     @staticmethod
     def _direction_item(rotation, frame, marker):
@@ -1975,6 +2558,12 @@ class RunStore:
     @staticmethod
     def _generate_symbol_match(state, level=None):
         level = state.level if level is None else level
+        if level >= 9:
+            return RunStore._generate_spatial_symbol_match(state, level)
+        return RunStore._generate_planar_symbol_match(state, level)
+
+    @staticmethod
+    def _generate_planar_symbol_match(state, level):
         sequence_length = SYMBOL_SEQUENCE_LENGTHS[level - 1]
         matches = RunStore._next_balanced_truth(
             state,
@@ -2034,6 +2623,14 @@ class RunStore:
             comparison_rule = 'grid_rotation'
             pattern_columns = 3
 
+        review = RunStore._symbol_review(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+        )
+        if review['matches'] != matches:
+            raise AssertionError('symbol review does not match answer')
         left_symbols = [token['symbol'] for token in left_tokens]
         right_symbols = [token['symbol'] for token in right_tokens]
         data = {
@@ -2056,7 +2653,419 @@ class RunStore:
             'data': data,
             'choices': ['yes', 'no'],
             'aliases': brain_symbol_match.ANSWER_ALIASES,
+            'review': review,
         }
+
+    @staticmethod
+    def _generate_spatial_symbol_match(state, level):  # noqa: C901
+        cube_count = SYMBOL_SEQUENCE_LENGTHS[level - 1]
+        matches = RunStore._next_balanced_truth(
+            state,
+            brain_symbol_match.SLUG,
+            level,
+        )
+        comparison_rule = (
+            'polycube_rotation'
+            if level == 9
+            else 'polycube_chirality'
+        )
+        require_chiral = level == 10
+        mutation = None
+        for _attempt in range(128):
+            left_source = RunStore._random_polycube(
+                state,
+                cube_count,
+                require_chiral=require_chiral,
+            )
+            if matches:
+                right_source = left_source
+                break
+            if level == 9:
+                mutation = RunStore._mutated_polycube(
+                    state,
+                    left_source,
+                )
+                if mutation is None:
+                    continue
+                right_source, mutated_cube = mutation
+            else:
+                right_source = RunStore._normalise_polycube(
+                    (-x, y, z)
+                    for x, y, z in left_source
+                )
+                mutated_cube = None
+                left_canonical = RunStore._polycube_canonical(left_source)
+                right_canonical = RunStore._polycube_canonical(right_source)
+                if left_canonical == right_canonical:
+                    continue
+            break
+        else:
+            raise AssertionError('could not generate a spatial symbol round')
+
+        left_rotation = state.rng.choice(_CUBE_ROTATIONS)
+        right_rotation = state.rng.choice(_CUBE_ROTATIONS)
+        left_cubes = RunStore._rotate_polycube(
+            left_source,
+            left_rotation,
+        )
+        right_cubes = RunStore._rotate_polycube(
+            right_source,
+            right_rotation,
+        )
+        if matches:
+            mismatch_indices = []
+            explanation = (
+                'The two solids are congruent under a proper 3D rotation.'
+            )
+        elif level == 9:
+            mismatch_index = RunStore._rotated_cube_index(
+                right_source,
+                mutated_cube,
+                right_rotation,
+            )
+            mismatch_indices = [mismatch_index]
+            explanation = (
+                'The highlighted cube changes the solid, so no rotation '
+                'can make the pair match.'
+            )
+        else:
+            mismatch_indices = list(range(len(right_cubes)))
+            explanation = (
+                'The right solid is a mirror image, not a proper rotation '
+                'of the left solid.'
+            )
+
+        left_canonical = RunStore._polycube_canonical(left_cubes)
+        right_canonical = RunStore._polycube_canonical(right_cubes)
+        canonical_matches = left_canonical == right_canonical
+        if canonical_matches != matches:
+            raise AssertionError('spatial symbol answer is inconsistent')
+
+        instruction = (
+            'Can one solid be rotated in 3D to match the other exactly?'
+            if level == 9
+            else (
+                'Are these the same chiral solid under rotation, '
+                'not reflection?'
+            )
+        )
+        data = {
+            'render_mode': 'polycube_3d',
+            'left_cubes': [list(cube) for cube in left_cubes],
+            'right_cubes': [list(cube) for cube in right_cubes],
+            'shape_size': cube_count,
+            'sequence_length': cube_count,
+            'comparison_rule': comparison_rule,
+            'transform_degrees': 0,
+            'instruction': instruction,
+            'spin_axis': list(state.rng.choice((
+                (1, 1, 0),
+                (0, 1, 1),
+                (1, 0, 1),
+                (-1, 1, 0),
+            ))),
+            'spin_phase_deg': state.rng.randrange(360),
+            'spin_speed_deg_s': state.rng.choice(
+                (-1, 1),
+            ) * state.rng.randint(7, 11),
+            'accessible_left': RunStore._polycube_accessible_label(
+                left_cubes,
+            ),
+            'accessible_right': RunStore._polycube_accessible_label(
+                right_cubes,
+            ),
+        }
+        return {
+            'kind': 'choice',
+            'prompt': instruction,
+            'expected_answer': 'yes' if matches else 'no',
+            'data': data,
+            'choices': ['yes', 'no'],
+            'aliases': brain_symbol_match.ANSWER_ALIASES,
+            'review': {
+                'matches': matches,
+                'mismatch_indices': mismatch_indices,
+                'comparison_rule': comparison_rule,
+                'transform_degrees': 0,
+                'explanation': explanation,
+            },
+        }
+
+    @staticmethod
+    def _normalise_polycube(cubes):
+        cubes = tuple(tuple(int(value) for value in cube) for cube in cubes)
+        if not cubes:
+            return ()
+        minima = tuple(
+            min(cube[axis] for cube in cubes)
+            for axis in range(3)
+        )
+        return tuple(sorted(
+            tuple(cube[axis] - minima[axis] for axis in range(3))
+            for cube in cubes
+        ))
+
+    @staticmethod
+    def _apply_cube_rotation(cube, rotation):
+        return tuple(
+            sum(rotation[row][column] * cube[column] for column in range(3))
+            for row in range(3)
+        )
+
+    @staticmethod
+    def _rotate_polycube(cubes, rotation):
+        return RunStore._normalise_polycube(
+            RunStore._apply_cube_rotation(cube, rotation)
+            for cube in cubes
+        )
+
+    @staticmethod
+    def _polycube_canonical(cubes):
+        return min(
+            RunStore._rotate_polycube(cubes, rotation)
+            for rotation in _CUBE_ROTATIONS
+        )
+
+    @staticmethod
+    def _polycube_connected(cubes):
+        cube_set = set(cubes)
+        if not cube_set:
+            return False
+        pending = [next(iter(cube_set))]
+        visited = set()
+        while pending:
+            cube = pending.pop()
+            if cube in visited:
+                continue
+            visited.add(cube)
+            for offset in _CUBE_NEIGHBOURS:
+                neighbour = tuple(
+                    cube[axis] + offset[axis]
+                    for axis in range(3)
+                )
+                if neighbour in cube_set and neighbour not in visited:
+                    pending.append(neighbour)
+        return visited == cube_set
+
+    @staticmethod
+    def _random_polycube(  # noqa: C901
+            state,
+            cube_count,
+            require_chiral=False,
+    ):
+        for _attempt in range(512):
+            cubes = {(0, 0, 0)}
+            while len(cubes) < cube_count:
+                anchor = state.rng.choice(tuple(cubes))
+                offset = state.rng.choice(_CUBE_NEIGHBOURS)
+                cubes.add(tuple(
+                    anchor[axis] + offset[axis]
+                    for axis in range(3)
+                ))
+            normalised = RunStore._normalise_polycube(cubes)
+            spans = [
+                max(cube[axis] for cube in normalised)
+                for axis in range(3)
+            ]
+            if any(span == 0 for span in spans):
+                continue
+            orientations = {
+                RunStore._rotate_polycube(normalised, rotation)
+                for rotation in _CUBE_ROTATIONS
+            }
+            if len(orientations) < 12:
+                continue
+            if require_chiral:
+                mirrored = RunStore._normalise_polycube(
+                    (-x, y, z)
+                    for x, y, z in normalised
+                )
+                normal_canonical = RunStore._polycube_canonical(normalised)
+                mirror_canonical = RunStore._polycube_canonical(mirrored)
+                if normal_canonical == mirror_canonical:
+                    continue
+            return normalised
+        raise AssertionError('could not generate an asymmetric polycube')
+
+    @staticmethod
+    def _mutated_polycube(state, cubes):  # noqa: C901
+        candidates = []
+        cube_set = set(cubes)
+        source_canonical = RunStore._polycube_canonical(cubes)
+        removable = list(cube_set)
+        state.rng.shuffle(removable)
+        for removed in removable:
+            remaining = cube_set - {removed}
+            if not RunStore._polycube_connected(remaining):
+                continue
+            anchors = list(remaining)
+            state.rng.shuffle(anchors)
+            offsets = list(_CUBE_NEIGHBOURS)
+            state.rng.shuffle(offsets)
+            for anchor in anchors:
+                for offset in offsets:
+                    added = tuple(
+                        anchor[axis] + offset[axis]
+                        for axis in range(3)
+                    )
+                    if added in remaining:
+                        continue
+                    candidate = RunStore._normalise_polycube(
+                        remaining | {added},
+                    )
+                    candidate_canonical = (
+                        RunStore._polycube_canonical(candidate)
+                    )
+                    if any((
+                        candidate == cubes,
+                        candidate_canonical == source_canonical,
+                    )):
+                        continue
+                    removed_minima = tuple(
+                        min(cube[axis] for cube in remaining | {added})
+                        for axis in range(3)
+                    )
+                    normalised_added = tuple(
+                        added[axis] - removed_minima[axis]
+                        for axis in range(3)
+                    )
+                    candidates.append((candidate, normalised_added))
+        return state.rng.choice(candidates) if candidates else None
+
+    @staticmethod
+    def _rotated_cube_index(cubes, focused_cube, rotation):
+        raw = [
+            RunStore._apply_cube_rotation(cube, rotation)
+            for cube in cubes
+        ]
+        minima = tuple(
+            min(cube[axis] for cube in raw)
+            for axis in range(3)
+        )
+        focused = RunStore._apply_cube_rotation(
+            focused_cube,
+            rotation,
+        )
+        focused = tuple(
+            focused[axis] - minima[axis]
+            for axis in range(3)
+        )
+        return sorted(
+            tuple(cube[axis] - minima[axis] for axis in range(3))
+            for cube in raw
+        ).index(focused)
+
+    @staticmethod
+    def _polycube_accessible_label(cubes):
+        return 'cubes at {}'.format(', '.join(
+            '({}, {}, {})'.format(*cube)
+            for cube in cubes
+        ))
+
+    @staticmethod
+    def _symbol_review(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+    ):
+        expected, actual = RunStore._symbol_review_values(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+        )
+        mismatch_indices = [
+            index
+            for index, pair in enumerate(zip(expected, actual))
+            if pair[0] != pair[1]
+        ]
+        matches = not mismatch_indices
+        explanation = RunStore._symbol_review_explanation(
+            comparison_rule,
+            transform_degrees,
+            mismatch_indices,
+        )
+        return {
+            'matches': matches,
+            'mismatch_indices': mismatch_indices,
+            'comparison_rule': comparison_rule,
+            'transform_degrees': transform_degrees,
+            'explanation': explanation,
+        }
+
+    @staticmethod
+    def _symbol_review_values(
+            left_tokens,
+            right_tokens,
+            comparison_rule,
+            transform_degrees,
+    ):
+        if comparison_rule == 'exact':
+            expected = [
+                token['symbol']
+                for token in left_tokens
+            ]
+            actual = [
+                token['symbol']
+                for token in right_tokens
+            ]
+        elif comparison_rule == 'global_rotation':
+            expected = [
+                (token['rotation_deg'] + transform_degrees) % 360
+                for token in left_tokens
+            ]
+            actual = [
+                token['rotation_deg']
+                for token in right_tokens
+            ]
+        elif comparison_rule == 'grid_rotation':
+            expected = RunStore._rotate_arrow_grid(
+                [
+                    token['rotation_deg']
+                    for token in left_tokens
+                ],
+                transform_degrees // 90,
+            )
+            actual = [
+                token['rotation_deg']
+                for token in right_tokens
+            ]
+        else:
+            raise ValueError(
+                'Unknown symbol comparison rule: {}'.format(
+                    comparison_rule,
+                ),
+            )
+        return expected, actual
+
+    @staticmethod
+    def _symbol_review_explanation(
+            comparison_rule,
+            transform_degrees,
+            mismatch_indices,
+    ):
+        if not mismatch_indices:
+            if comparison_rule == 'exact':
+                return 'Every position matches exactly.'
+            if comparison_rule == 'global_rotation':
+                return (
+                    'Every arrow matches after a {}° clockwise rotation.'
+                ).format(transform_degrees)
+            return (
+                'Every cell matches after rotating the whole grid '
+                '{}° clockwise.'
+            ).format(transform_degrees)
+
+        position_labels = ', '.join(
+            str(index + 1)
+            for index in mismatch_indices
+        )
+        noun = 'Position' if len(mismatch_indices) == 1 else 'Positions'
+        return '{} {} did not match the rule.'.format(
+            noun,
+            position_labels,
+        )
 
     @staticmethod
     def _basic_symbol_sequences(state, level, sequence_length, matches):
@@ -2261,7 +3270,9 @@ class RunStore:
     @staticmethod
     def _generate_word_scramble(state, level=None):
         level = state.level if level is None else level
-        answer = state.rng.choice(
+        answer = RunStore._next_content(
+            state,
+            'word-scramble:{}'.format(level),
             _SCRAMBLE_WORDS_BY_LEVEL[level],
         )
         scrambled = state.rng.choice(
@@ -2288,5 +3299,11 @@ class RunStore:
                 'hint': hint,
                 'moved_positions': moved_positions,
                 'preserved_bigrams': preserved_bigrams,
+            },
+            'review': {
+                'explanation': '{} unscrambles to {}.'.format(
+                    scrambled.upper(),
+                    answer.upper(),
+                ),
             },
         }

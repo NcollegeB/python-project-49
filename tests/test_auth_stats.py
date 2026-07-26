@@ -60,7 +60,7 @@ class AuthAndStatisticsTest(unittest.TestCase):
         unknown = self.client.get('/api/benchmarks/missing?score=1')
 
         benchmarks = catalog.get_json()['benchmarks']
-        self.assertEqual(11, len(benchmarks))
+        self.assertEqual(13, len(benchmarks))
         self.assertEqual('even', benchmarks[0]['slug'])
         self.assertIn(
             'not measured population',
@@ -110,9 +110,9 @@ class AuthAndStatisticsTest(unittest.TestCase):
         self.assertIn('Even or Odd', player_page)
         self.assertIn('data-game="even"', player_page)
         self.assertIn('data-score="0"', player_page)
-        self.assertIn('1 of 11 games played', player_page)
+        self.assertIn('1 of 13 games played', player_page)
         self.assertEqual(
-            11,
+            13,
             player_page.count('class="player-score-card"'),
         )
 

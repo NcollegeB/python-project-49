@@ -17,25 +17,86 @@ class FrontendProgressionContractTest(unittest.TestCase):
         cls.stylesheet = (STATIC_ROOT / 'main.css').read_text(
             encoding='utf-8',
         )
+        cls.instrument_javascript = (
+            STATIC_ROOT / 'instrument_visuals.js'
+        ).read_text(encoding='utf-8')
+        cls.audio_javascript = (
+            STATIC_ROOT / 'audio.js'
+        ).read_text(encoding='utf-8')
         cls.template = (
             PROJECT_ROOT / 'brain_games' / 'templates' / 'index.html'
         ).read_text(encoding='utf-8')
 
-    def test_timing_modes_and_level_hud_are_present(self):
-        for mode in ('standard', 'relaxed', 'self-paced'):
+    def test_timing_modes_and_level_practice_selector_are_present(self):
+        for mode in ('standard', 'self-paced'):
             self.assertIn('value="{}"'.format(mode), self.template)
+        self.assertNotIn('value="relaxed"', self.template)
+        self.assertIn('>Regular</span>', self.template)
+        self.assertIn('>Relaxed</span>', self.template)
+        self.assertNotIn('2× answer time', self.template)
         for element_id in (
                 'levelValue',
                 'levelProgress',
                 'difficultyLabel',
                 'roundTimer',
                 'timerProgress',
+                'levelSelector',
+                'levelOptions',
+                'practiceLevelNote',
         ):
             self.assertIn('id="{}"'.format(element_id), self.template)
         self.assertIn('name="timing-mode"', self.template)
         self.assertIn('timing_mode: timingMode', self.javascript)
-        self.assertIn('Relaxed · 2× answer time', self.template)
-        self.assertIn('Self-paced · No answer deadline', self.template)
+        self.assertIn('start_level: startLevel', self.javascript)
+        self.assertIn('function renderLevelSelector(maxLevel)', self.javascript)
+        self.assertIn('state.startLevel = 1;', self.javascript)
+        self.assertIn(
+            "'Practice — scores are not saved.'",
+            self.javascript,
+        )
+        self.assertIn("input.name = 'start-level';", self.javascript)
+        self.assertIn(
+            '`Start at level ${level} of ${maxLevel}`',
+            self.javascript,
+        )
+        self.assertIn('min-height: 46px;', self.stylesheet)
+        self.assertIn(
+            'grid-template-columns: repeat(5, minmax(44px, 1fr));',
+            self.stylesheet,
+        )
+        self.assertIn(
+            "selectedTimingMode() !== 'standard'",
+            self.javascript,
+        )
+
+    def test_practice_results_are_not_saved_or_benchmarked(self):
+        finish_block = self.javascript.split(
+            'async function finishRun',
+            1,
+        )[1].split(
+            'function ordinal',
+            1,
+        )[0]
+        self.assertIn(
+            ": 'Not saved';",
+            finish_block,
+        )
+        self.assertIn(
+            "element.textContent = ranked ? '…' : '—';",
+            finish_block,
+        )
+        self.assertIn('if (ranked) {', finish_block)
+        self.assertIn(
+            'refreshResultBenchmark(completedGame, score, resultIsCurrent)',
+            finish_block,
+        )
+        self.assertLess(
+            finish_block.index('if (ranked) {'),
+            finish_block.index(
+                'refreshResultBenchmark('
+                'completedGame, score, resultIsCurrent)',
+            ),
+        )
 
     def test_answer_acknowledgement_and_timeout_are_race_guarded(self):
         self.assertIn(
@@ -82,7 +143,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
         self.assertIn('max-width: 374px;', self.stylesheet)
         self.assertIn('.round-visual--direction', self.stylesheet)
         self.assertIn(
-            'directionData.arrows.forEach((arrow) => {',
+            'directionData.arrows.forEach((arrow, index) => {',
             self.javascript,
         )
         self.assertIn('.symbol-sequence', self.stylesheet)
@@ -282,7 +343,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
             1,
         )[1].split('}', 1)[0]
         for source in (
-                'height: 64px;',
+                'height: 96px;',
                 'overflow-y: auto;',
                 'overflow-wrap: anywhere;',
                 'scrollbar-gutter: stable;',
@@ -294,7 +355,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
             1,
         )[1]
         self.assertIn(
-            '.feedback-region {\n        height: 80px;\n    }',
+            'height: 118px;',
             mobile_styles,
         )
         self.assertIn(
@@ -311,8 +372,260 @@ class FrontendProgressionContractTest(unittest.TestCase):
             self.template,
         )
 
+    def test_wrong_answers_use_game_specific_review_states(self):
+        for source in (
+                'const CORRECT_ADVANCE_MS = 420;',
+                'const WRONG_REVIEW_MS = {',
+                "'direction-focus': 2200",
+                "'symbol-match': 2300",
+                "'word-scramble': 2300",
+                'answerReviewDelay(answeredRound, grading, runResult)',
+                'showWrongAnswerReview',
+                'grading.review',
+                'REVIEW_SKIP_DELAY_MS',
+                'skipRemainingMs',
+                'pauseAnswerTransitionForVisibility();',
+                'resumeAnswerTransitionFromVisibility();',
+                'advanceAnswerTransition({manual: true})',
+                'dom.activeState.contains(document.activeElement)',
+                'pauseGameForDialog',
+                'resumeGameAfterDialog',
+        ):
+            self.assertIn(source, self.javascript)
+        self.assertNotIn('const FEEDBACK_DELAY', self.javascript)
+        self.assertIn('data-review="true"', self.stylesheet)
+        self.assertIn('.feedback-continue', self.stylesheet)
+        self.assertIn('id="reviewContinue"', self.template)
+        feedback_markup = self.template.split(
+            'id="feedbackRegion"',
+            1,
+        )[1].split('</div>', 1)[0]
+        self.assertNotIn('reviewContinue', feedback_markup)
+
+    def test_twgl_instrument_layer_is_local_and_progressively_enhanced(self):
+        self.assertIn(
+            "filename='vendor/twgl-7.0.0.min.js'",
+            self.template,
+        )
+        self.assertIn(
+            "import {InstrumentVisuals} from './instrument_visuals.js';",
+            self.javascript,
+        )
+        for source in (
+                "new Set(['symbol-match'])",
+                "this.canvas.getContext('webgl'",
+                'twgl.createProgramInfo',
+                'twgl.createBufferInfoFromArrays',
+                "addEventListener('webglcontextlost'",
+                'this.canvas.setAttribute(\'aria-hidden\', \'true\')',
+                'Math.min(2, window.devicePixelRatio || 1)',
+                "new Set(['polycube_3d'])",
+                'depth: true',
+                'SOLID_VERTEX_SHADER',
+                'function arrowMeshArrays(profile, headStyle, shaftStyle)',
+                'directionArrowStyle(item)',
+                'const directionArrows = {};',
+                'directionArrowMesh(style)',
+                'drawDirection3D()',
+                'drawPolycube3D()',
+                "'(prefers-reduced-motion: reduce)'",
+                "document.visibilityState !== 'hidden'",
+        ):
+            self.assertIn(source, self.instrument_javascript)
+        self.assertNotIn('Math.random(', self.instrument_javascript)
+        self.assertNotIn(
+            'directionShaftMesh(solid)',
+            self.instrument_javascript,
+        )
+        self.assertNotIn('this.meshes.bandCollar', self.instrument_javascript)
+
+    def test_direction_overlay_has_no_per_arrow_guide_artifacts(self):
+        direction_geometry = self.instrument_javascript.split(
+            'directionGeometry(origin, guideLines, reviewLines, reviewFill) {',
+            1,
+        )[1].split(
+            'symbolGeometry(origin, guideLines, reviewLines, reviewFill) {',
+            1,
+        )[0]
+        self.assertNotIn('tokens.forEach(', direction_geometry)
+        self.assertNotIn('rect.top - 5', direction_geometry)
+        self.assertIn(
+            'addCornerFrame(guideLines, field, 9, 12);',
+            direction_geometry,
+        )
+        self.assertIn(
+            'addFilledRectangle(reviewFill, target, 4);',
+            direction_geometry,
+        )
+
+    def test_spatial_arrows_are_one_mesh_with_direction_gated_depth_cues(
+            self,
+    ):
+        renderer = self.instrument_javascript.split(
+            'drawDirection3D() {',
+            1,
+        )[1].split(
+            'drawPolycube3D() {',
+            1,
+        )[0]
+        self.assertEqual(1, renderer.count('this.drawSolid('))
+        self.assertNotIn('this.meshes.cube', renderer)
+        self.assertNotIn('bandCollar', renderer)
+        self.assertNotIn('DEPTH_TEST', renderer)
+        for source in (
+                'const DEPTH_REVEAL_ANGLE = 42 * DEG_TO_RAD;',
+                (
+                    'return mat4RotationX('
+                    '(-Math.PI / 2) - DEPTH_REVEAL_ANGLE);'
+                ),
+                'attribute float a_surface_cue;',
+                'uniform float u_cue_mode;',
+                '* step(0.5, u_cue_mode);',
+                '* step(u_cue_mode, -0.5);',
+                'surfaceCues.push(surfaceCue);',
+                'const tipRadius =',
+                'addFace(tailCap, -1);',
+                'addFace(tipCap.reverse(), 1);',
+                (
+                    "headStyle = legacyBand === 'split' "
+                    "? 'wide' : 'narrow';"
+                ),
+                (
+                    "shaftStyle = legacyBeacon === 'dot' "
+                    "? 'long' : 'short';"
+                ),
+        ):
+            self.assertIn(source, self.instrument_javascript)
+
+    def test_spatial_rounds_have_webgl_and_static_accessible_renderers(self):
+        for source in (
+                "new Set(['polycube_3d'])",
+                'renderPolycube3DFallback',
+                'renderMotionDirection',
+                "namedRenderMode === 'motion_direction_2d'",
+                'renderMemoryMatrix',
+                "namedRenderMode === 'memory_matrix'",
+                'renderPinballRecall',
+                "namedRenderMode === 'pinball_recall'",
+                "'spatial-3d-fallback polycube-fallback'",
+                "renderCubeProjection(cubes, 'FRONT', 0, 1)",
+                "renderCubeProjection(cubes, 'SIDE', 2, 1)",
+                "renderCubeProjection(cubes, 'TOP', 0, 2)",
+                "round.data?.render_mode === 'polycube_3d'",
+        ):
+            self.assertIn(source, self.javascript)
+        for source in (
+                '.round-visual[data-instrument="twgl-3d"]',
+                '.motion-arrow',
+                '.memory-matrix__grid',
+                '.pinball-board',
+                '.polycube-projection',
+                '.polycube-projection__cell[data-review-state="mismatch"]',
+        ):
+            self.assertIn(source, self.stylesheet)
+
+    def test_memory_matrix_grades_tiles_immediately_with_sound(self):
+        render_block = self.javascript.split(
+            'function renderMemoryMatrix',
+            1,
+        )[1].split(
+            'function clampedUnit',
+            1,
+        )[0]
+        tile_click_block = render_block.split(
+            "tile.addEventListener('click'",
+            1,
+        )[1].split(
+            'grid.append(tile);',
+            1,
+        )[0]
+        for source in (
+                "tile.dataset.selectionOutcome = correctTile",
+                "tile.dataset.nonAnswer = 'true';",
+                "audio.cue(correctTile ? 'tile' : 'tileWrong');",
+                'const found = matrixFoundSelection(visual);',
+                'const misses = matrixMissCount(visual);',
+                'if (found.length === requiredCount)',
+                'else if (misses >= maxMisses)',
+                '{inputCue: false}',
+        ):
+            self.assertIn(source, tile_click_block)
+        self.assertEqual(2, tile_click_block.count('submitAnswer('))
+        self.assertNotIn('Check pattern', render_block)
+        self.assertNotIn('matrixSubmit', render_block)
+        self.assertIn(
+            'options.inputCue !== false',
+            self.javascript,
+        )
+        for source in (
+                'tile: [',
+                'tileWrong: [',
+        ):
+            self.assertIn(source, self.audio_javascript)
+        review_block = self.javascript.split(
+            'function annotateRecallReview',
+            1,
+        )[1].split(
+            'function annotateReview',
+            1,
+        )[0]
+        for source in (
+                'Incorrect selections:',
+                "tile.dataset.selectionOutcome = 'correct';",
+                "tile.dataset.selectionOutcome = 'missed';",
+                "tile.dataset.selectionOutcome = 'incorrect';",
+                'Incorrect selection.',
+        ):
+            self.assertIn(source, review_block)
+        for source in (
+                '[data-selection-outcome="correct"]::after',
+                '[data-selection-outcome="missed"]::after',
+                '[data-selection-outcome="incorrect"]::after',
+                'content: "✓";',
+                'content: "+";',
+                'content: "×";',
+        ):
+            self.assertIn(source, self.stylesheet)
+        self.assertNotIn('.memory-matrix__submit', self.stylesheet)
+
+    def test_direction_arrows_use_crisp_css_geometry(self):
+        for source in (
+                'function renderMotionDirection(round, visual)',
+                "arrow.classList.add('motion-arrow');",
+                "'animateTransform'",
+                "animation.setAttribute(\n                'values'",
+                "arrow.setAttribute(\n            'points'",
+                "arrow.setAttribute(\n            'transform'",
+                "item?.visual_role === 'distractor'",
+                'field.dataset.hasDistractors',
+        ):
+            self.assertIn(source, self.javascript)
+        for source in (
+                '.motion-arrow',
+                'fill: currentcolor;',
+                '.motion-target-ring',
+                '.motion-item[data-role="target"]',
+                '.motion-trails circle',
+                '.round-visual[data-review="true"] .motion-trails',
+                'opacity: 0;',
+        ):
+            self.assertIn(source, self.stylesheet)
+        self.assertNotIn('style.setProperty', self.javascript)
+        self.assertIn(
+            "const THREE_D_RENDER_MODES = new Set(['polycube_3d']);",
+            self.javascript,
+        )
+        self.assertIn(
+            "const SPATIAL_GAMES = new Set(['symbol-match']);",
+            self.instrument_javascript,
+        )
+
     def test_vercel_assets_match_local_assets(self):
-        for name in ('app.js', 'main.css'):
+        for name in (
+                'app.js',
+                'instrument_visuals.js',
+                'main.css',
+        ):
             self.assertEqual(
                 (STATIC_ROOT / name).read_bytes(),
                 (PUBLIC_STATIC_ROOT / name).read_bytes(),

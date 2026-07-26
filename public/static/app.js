@@ -1,9 +1,28 @@
 import {ArcadeAudio} from './audio.js';
+import {InstrumentVisuals} from './instrument_visuals.js';
 
 
 const PLAYER_STORAGE_KEY = 'brainhacker-player-name';
 const GUEST_PREFIX = 'Guest#';
-const FEEDBACK_DELAY = 620;
+const CORRECT_ADVANCE_MS = 420;
+const LEVEL_UP_ADVANCE_MS = 900;
+const REVIEW_SKIP_DELAY_MS = 450;
+const TIMEOUT_REVIEW_BONUS_MS = 450;
+const FINAL_MISS_REVIEW_BONUS_MS = 300;
+const WRONG_REVIEW_MS = {
+    even: 1450,
+    calc: 2100,
+    gcd: 2300,
+    progression: 2600,
+    prime: 1900,
+    'number-memory': 2300,
+    'verbal-memory': 1800,
+    'direction-focus': 2200,
+    'symbol-match': 2300,
+    'word-scramble': 2300,
+    'memory-matrix': 2600,
+    'pinball-recall': 3200,
+};
 const STILL_CHECKING_DELAY = 1000;
 const TIMEOUT_ANSWER = '__brainhacker_timeout__';
 const TIMEOUT_RETRY_DELAYS = [500, 1000, 2000, 4000, 5000];
@@ -13,6 +32,7 @@ const SUPPORTED_ARROW_ROTATIONS = new Set([
     180, 195, 200, 210, 220, 225, 230, 240, 250, 255,
     270, 285, 290, 300, 310, 315, 320, 330, 340, 345,
 ]);
+const THREE_D_RENDER_MODES = new Set(['polycube_3d']);
 
 const iconBySlug = {
     even: '02',
@@ -25,7 +45,9 @@ const iconBySlug = {
     'direction-focus': '↗',
     'symbol-match': '◇◆',
     'word-scramble': 'A?',
-    culmination: '10×',
+    'memory-matrix': '▦',
+    'pinball-recall': '◉',
+    culmination: '12×',
 };
 
 const instructionBySlug = {
@@ -36,9 +58,11 @@ const instructionBySlug = {
     prime: 'Is this number prime?',
     'number-memory': 'Memorize this number.',
     'verbal-memory': 'Have you seen this word in this run?',
-    'direction-focus': 'Which way does the odd arrow point?',
+    'direction-focus': 'Which way is the tracked group moving?',
     'symbol-match': 'Do these symbols match?',
     'word-scramble': 'Unscramble the letters.',
+    'memory-matrix': 'Memorize the highlighted tiles.',
+    'pinball-recall': 'Memorize the mirrors, then trace the ball.',
 };
 
 const dom = {};
@@ -59,11 +83,22 @@ const state = {
         paused: false,
     },
     transitionTimer: null,
+    answerTransition: {
+        callback: null,
+        deadline: null,
+        remainingMs: 0,
+        paused: false,
+        skippable: false,
+        canSkipAt: null,
+        skipRemainingMs: 0,
+        unlockTimer: null,
+    },
     pendingTimer: null,
     pendingRoundId: null,
     pendingControl: null,
     focusRestoreFrame: null,
     leaderboardRequestSequence: 0,
+    leaderboardOpen: false,
     timeoutRetry: {
         timer: null,
         runId: null,
@@ -84,12 +119,14 @@ const state = {
         renderedTenths: null,
     },
     startSequence: 0,
+    startLevel: 1,
     navigating: false,
     personalBests: new Map(),
     benchmarks: new Map(),
 };
 
 let audio;
+let instrumentVisuals;
 let guestPlayerName;
 
 
@@ -114,11 +151,13 @@ function cacheDom() {
         'levelProgress', 'roundValue',
         'cycleTrack', 'briefingState', 'activeState', 'resultState',
         'briefingIcon', 'briefingTitle', 'briefingDescription',
+        'levelSelector', 'levelOptions', 'practiceLevelNote',
         'timingMode', 'startRunButton', 'roundSource', 'difficultyLabel',
         'roundPrompt', 'roundTimer', 'timerText', 'timerProgress',
         'timerAnnouncement', 'roundVisual',
         'memoryCurtain', 'answerForm', 'answerInput', 'submitAnswer',
-        'choiceControls', 'answerRow', 'feedbackRegion', 'resultScore', 'resultBest',
+        'choiceControls', 'answerRow', 'feedbackRegion', 'reviewContinue',
+        'resultScore', 'resultBest',
         'resultAverage', 'resultPercentile', 'resultRank',
         'resultMessage', 'retryButton', 'resultMenuButton',
         'leaderboardDialog', 'leaderboardRows', 'leaderboardFilter',
@@ -327,8 +366,88 @@ function selectedTimingMode() {
 }
 
 
-function setTimingControlsDisabled(disabled) {
+function selectedStartLevel() {
+    const configuredMaxLevel = Number(state.selected?.max_level || 5);
+    const maxLevel = Number.isFinite(configuredMaxLevel)
+        ? Math.max(1, Math.round(configuredMaxLevel))
+        : 5;
+    return Math.max(
+        1,
+        Math.min(maxLevel, Math.round(Number(state.startLevel) || 1)),
+    );
+}
+
+
+function updatePracticeLevelNote(maxLevel) {
+    const startLevel = selectedStartLevel();
+    const isPractice = (
+        startLevel > 1
+        || selectedTimingMode() !== 'standard'
+    );
+    if (dom.practiceLevelNote) {
+        dom.practiceLevelNote.textContent = isPractice
+            ? 'Practice — scores are not saved.'
+            : 'Level 1 starts a full ranked test.';
+        dom.practiceLevelNote.dataset.practice = String(isPractice);
+    }
+    if (dom.levelValue) {
+        dom.levelValue.textContent = `${startLevel}/${maxLevel}`;
+        dom.levelValue.setAttribute(
+            'aria-label',
+            `Level ${startLevel} of ${maxLevel}`,
+        );
+    }
+    if (dom.runStatus) {
+        dom.runStatus.textContent = isPractice
+            ? 'Practice setup'
+            : 'Test setup';
+    }
+}
+
+
+function renderLevelSelector(maxLevel) {
+    state.startLevel = 1;
+    if (!dom.levelOptions) {
+        return;
+    }
+    dom.levelOptions.replaceChildren();
+    dom.levelOptions.dataset.count = String(maxLevel);
+    for (let level = 1; level <= maxLevel; level += 1) {
+        const option = document.createElement('label');
+        option.className = 'level-option';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'start-level';
+        input.value = String(level);
+        input.checked = level === 1;
+        input.setAttribute(
+            'aria-label',
+            `Start at level ${level} of ${maxLevel}`,
+        );
+        const number = createTextElement(
+            'span',
+            'level-option__number',
+            String(level),
+        );
+        input.addEventListener('change', () => {
+            if (!input.checked) {
+                return;
+            }
+            state.startLevel = level;
+            updatePracticeLevelNote(maxLevel);
+        });
+        option.append(input, number);
+        dom.levelOptions.append(option);
+    }
+    updatePracticeLevelNote(maxLevel);
+}
+
+
+function setBriefingControlsDisabled(disabled) {
     dom.timingMode?.querySelectorAll('input').forEach((input) => {
+        input.disabled = disabled;
+    });
+    dom.levelSelector?.querySelectorAll('input').forEach((input) => {
         input.disabled = disabled;
     });
 }
@@ -366,7 +485,6 @@ function openBriefing(slug, options = {}) {
     dom.briefingDescription.textContent = game.description || game.rules;
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
-    dom.runStatus.textContent = 'Test setup';
     updateHud({
         score: 0,
         lives: 3,
@@ -376,9 +494,10 @@ function openBriefing(slug, options = {}) {
         level_goal: 3,
         max_level: maxLevel,
     });
+    renderLevelSelector(maxLevel);
     dom.roundValue.textContent = 'Ready';
     dom.cycleTrack.replaceChildren();
-    setTimingControlsDisabled(false);
+    setBriefingControlsDisabled(false);
     setFeedback('', 'neutral');
     if (!options.fromHistory) {
         updateHistory(slug, options.replaceHistory);
@@ -409,20 +528,175 @@ function clearTransitionTimer() {
         window.clearTimeout(state.transitionTimer);
         state.transitionTimer = null;
     }
+    if (state.answerTransition.unlockTimer !== null) {
+        window.clearTimeout(state.answerTransition.unlockTimer);
+    }
+    state.answerTransition.callback = null;
+    state.answerTransition.deadline = null;
+    state.answerTransition.remainingMs = 0;
+    state.answerTransition.paused = false;
+    state.answerTransition.skippable = false;
+    state.answerTransition.canSkipAt = null;
+    state.answerTransition.skipRemainingMs = 0;
+    state.answerTransition.unlockTimer = null;
 }
 
 
-function clearPendingFeedback() {
+function clearPendingFeedback(options = {}) {
     if (state.pendingTimer) {
         window.clearTimeout(state.pendingTimer);
         state.pendingTimer = null;
     }
     state.pendingRoundId = null;
     if (state.pendingControl) {
-        state.pendingControl.removeAttribute('data-submitted');
+        if (options.preserveSubmitted !== true) {
+            state.pendingControl.removeAttribute('data-submitted');
+        }
         state.pendingControl = null;
     }
     dom.answerForm?.setAttribute('aria-busy', 'false');
+}
+
+
+function leaderboardIsOpen() {
+    if (!dom.leaderboardDialog) {
+        return false;
+    }
+    return (
+        state.leaderboardOpen
+        || dom.leaderboardDialog.open === true
+    );
+}
+
+
+function gameInteractionIsPaused() {
+    return (
+        document.visibilityState === 'hidden'
+        || leaderboardIsOpen()
+    );
+}
+
+
+function enableReviewAdvance() {
+    if (!state.answerTransition.callback) {
+        return;
+    }
+    state.answerTransition.skipRemainingMs = 0;
+    state.answerTransition.canSkipAt = null;
+    if (dom.reviewContinue) {
+        dom.reviewContinue.disabled = false;
+    }
+}
+
+
+function armAnswerTransition() {
+    const transition = state.answerTransition;
+    if (!transition.callback || transition.paused) {
+        return;
+    }
+    const delay = Math.max(0, transition.remainingMs);
+    transition.deadline = window.performance.now() + delay;
+    state.transitionTimer = window.setTimeout(() => {
+        state.transitionTimer = null;
+        advanceAnswerTransition();
+    }, delay);
+
+    if (transition.skippable) {
+        const unlockDelay = Math.max(0, transition.skipRemainingMs);
+        transition.canSkipAt = window.performance.now() + unlockDelay;
+        transition.unlockTimer = window.setTimeout(() => {
+            transition.unlockTimer = null;
+            enableReviewAdvance();
+        }, unlockDelay);
+    }
+}
+
+
+function scheduleAnswerTransition(delay, callback, options = {}) {
+    clearTransitionTimer();
+    state.answerTransition.callback = callback;
+    state.answerTransition.remainingMs = Math.max(0, Number(delay || 0));
+    state.answerTransition.skippable = options.skippable === true;
+    state.answerTransition.skipRemainingMs = (
+        state.answerTransition.skippable
+            ? REVIEW_SKIP_DELAY_MS
+            : 0
+    );
+    state.answerTransition.canSkipAt = null;
+    state.answerTransition.paused = gameInteractionIsPaused();
+    if (!state.answerTransition.paused) {
+        armAnswerTransition();
+    }
+}
+
+
+function advanceAnswerTransition(options = {}) {
+    const transition = state.answerTransition;
+    if (!transition.callback) {
+        return false;
+    }
+    if (
+        options.manual === true
+        && (
+            !transition.skippable
+            || transition.skipRemainingMs > 0
+            || (
+                transition.canSkipAt !== null
+                && window.performance.now() < transition.canSkipAt
+            )
+        )
+    ) {
+        return false;
+    }
+    const callback = transition.callback;
+    clearTransitionTimer();
+    callback();
+    return true;
+}
+
+
+function pauseAnswerTransitionForVisibility() {
+    const transition = state.answerTransition;
+    if (!transition.callback || transition.paused) {
+        return;
+    }
+    if (transition.deadline !== null) {
+        transition.remainingMs = Math.max(
+            0,
+            transition.deadline - window.performance.now(),
+        );
+    }
+    if (transition.canSkipAt !== null) {
+        transition.skipRemainingMs = Math.max(
+            0,
+            transition.canSkipAt - window.performance.now(),
+        );
+    }
+    if (state.transitionTimer !== null) {
+        window.clearTimeout(state.transitionTimer);
+        state.transitionTimer = null;
+    }
+    if (transition.unlockTimer !== null) {
+        window.clearTimeout(transition.unlockTimer);
+        transition.unlockTimer = null;
+    }
+    transition.deadline = null;
+    transition.canSkipAt = null;
+    transition.paused = true;
+}
+
+
+function resumeAnswerTransitionFromVisibility() {
+    const transition = state.answerTransition;
+    if (
+        !transition.callback
+        || !transition.paused
+        || gameInteractionIsPaused()
+    ) {
+        return;
+    }
+    transition.paused = false;
+    armAnswerTransition();
 }
 
 
@@ -567,7 +841,7 @@ function countdownTick(timestamp) {
         clearCountdown();
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         countdown.frame = null;
         countdown.lastTick = null;
         countdown.paused = true;
@@ -601,7 +875,7 @@ function beginCountdown() {
     ) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.countdown.paused = true;
         return;
     }
@@ -632,7 +906,7 @@ function scheduleCountdownStart(round, remainingOverride = null) {
     dom.roundTimer.hidden = false;
     updateCountdownDisplay();
 
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.countdown.paused = true;
         return;
     }
@@ -677,6 +951,7 @@ function resumeCountdownFromVisibility() {
         || !countdown.paused
         || countdown.roundId !== state.round?.round_id
         || state.busy
+        || gameInteractionIsPaused()
     ) {
         return;
     }
@@ -703,11 +978,12 @@ async function startRun() {
     clearCountdown();
     const selectedSlug = state.selected.slug;
     const timingMode = selectedTimingMode();
+    const startLevel = selectedStartLevel();
     const requestSequence = state.startSequence + 1;
     state.startSequence = requestSequence;
     state.busy = true;
     dom.startRunButton.disabled = true;
-    setTimingControlsDisabled(true);
+    setBriefingControlsDisabled(true);
     dom.briefingFeedback.textContent = '';
     dom.briefingFeedback.hidden = true;
     audio.unlock();
@@ -719,6 +995,7 @@ async function startRun() {
                 game: state.selected.slug,
                 player: currentPlayerName(),
                 timing_mode: timingMode,
+                start_level: startLevel,
             }),
         });
         const createdRun = unwrapRun(payload);
@@ -753,7 +1030,7 @@ async function startRun() {
         if (requestSequence === state.startSequence) {
             state.busy = false;
             dom.startRunButton.disabled = false;
-            setTimingControlsDisabled(false);
+            setBriefingControlsDisabled(false);
         }
     }
 }
@@ -763,8 +1040,340 @@ function setFeedback(message, tone = 'neutral') {
     if (!dom.feedbackRegion) {
         return;
     }
+    dom.feedbackRegion.removeAttribute('data-review');
     dom.feedbackRegion.textContent = message;
     dom.feedbackRegion.dataset.tone = tone;
+    if (dom.reviewContinue) {
+        dom.reviewContinue.hidden = true;
+        dom.reviewContinue.disabled = true;
+    }
+}
+
+
+function setAnswerReviewFeedback(sourceName, sourceSlug, grading, review) {
+    if (!dom.feedbackRegion) {
+        return;
+    }
+    const timedOut = grading.timed_out === true;
+    const submitted = String(grading.submitted_answer ?? '').trim();
+    const expected = String(grading.expected_answer ?? '').trim();
+    const label = createTextElement(
+        'span',
+        'feedback-review__label',
+        `${timedOut ? 'TIME' : 'MISS'} / ${sourceName}`,
+    );
+    let answerLine = timedOut
+        ? `No answer recorded · Correct answer: ${expected}`
+        : `Your answer: ${submitted} · Correct answer: ${expected}`;
+    if (sourceSlug === 'memory-matrix') {
+        answerLine = timedOut
+            ? 'No pattern recorded · Correct tiles are highlighted'
+            : 'Pattern did not match · Correct tiles are highlighted';
+    }
+    const message = createTextElement(
+        'strong',
+        'feedback-review__answer',
+        answerLine,
+    );
+    const detail = createTextElement(
+        'span',
+        'feedback-review__detail',
+        review.explanation || `The answer was ${expected}.`,
+    );
+    const copy = document.createElement('span');
+    copy.className = 'feedback-review__copy';
+    copy.append(label, message, detail);
+    dom.feedbackRegion.replaceChildren(copy);
+    dom.feedbackRegion.dataset.tone = 'wrong';
+    dom.feedbackRegion.dataset.review = 'true';
+    if (dom.reviewContinue) {
+        dom.reviewContinue.hidden = false;
+        dom.reviewContinue.disabled = true;
+    }
+}
+
+
+function answerReviewDelay(round, grading, runResult) {
+    const sourceSlug = grading.source_slug || round.source_slug;
+    const sourceLevel = Math.max(
+        1,
+        Number(round.source_level ?? round.level ?? 1),
+    );
+    const complexityBonus = Math.min(420, (sourceLevel - 1) * 60);
+    const timeoutBonus = grading.timed_out
+        ? TIMEOUT_REVIEW_BONUS_MS
+        : 0;
+    const endingBonus = (
+        runResult.game_over
+        || runResult.ended
+        || !runResult.round
+    ) ? FINAL_MISS_REVIEW_BONUS_MS : 0;
+    return (
+        (WRONG_REVIEW_MS[sourceSlug] || 2100)
+        + complexityBonus
+        + timeoutBonus
+        + endingBonus
+    );
+}
+
+
+function normalisedAnswer(value) {
+    return String(value ?? '').trim().toLocaleLowerCase();
+}
+
+
+function markReviewedControls(grading, submittedControl) {
+    const expected = normalisedAnswer(grading.expected_answer);
+    submittedControl?.removeAttribute('data-submitted');
+    dom.choiceControls.querySelectorAll('button').forEach((button) => {
+        button.removeAttribute('data-submitted');
+        button.removeAttribute('data-review-state');
+        if (normalisedAnswer(button.dataset.value) === expected) {
+            button.dataset.reviewState = 'answer';
+        }
+    });
+    if (submittedControl?.classList.contains('choice-button')) {
+        submittedControl.dataset.reviewState = grading.correct
+            ? 'answer'
+            : 'submitted';
+    } else if (!grading.timed_out) {
+        dom.answerInput.dataset.reviewState = grading.correct
+            ? 'answer'
+            : 'submitted';
+    }
+}
+
+
+function revealNumberMemoryReview(round, grading) {
+    if (round.source_slug !== 'number-memory') {
+        return;
+    }
+    dom.memoryCurtain.hidden = true;
+    dom.roundVisual.classList.remove('is-hidden');
+    dom.roundVisual.removeAttribute('aria-hidden');
+    dom.roundVisual.setAttribute(
+        'aria-label',
+        `The number was ${grading.expected_answer}.`,
+    );
+    const answer = createTextElement(
+        'div',
+        'prompt-value prompt-value--review',
+        String(grading.expected_answer),
+    );
+    answer.dataset.reviewState = 'answer';
+    dom.roundVisual.replaceChildren(answer);
+}
+
+
+function annotateProgressionReview(round, grading) {
+    if (round.source_slug !== 'progression') {
+        return;
+    }
+    const hiddenIndex = Number(
+        grading.review?.hidden_index
+        ?? round.data?.hidden_index,
+    );
+    const token = dom.roundVisual.querySelector(
+        `.sequence-token[data-index="${hiddenIndex}"]`,
+    );
+    if (token) {
+        token.textContent = String(grading.expected_answer);
+        token.dataset.reviewState = 'answer';
+    }
+}
+
+
+function annotateScrambleReview(round, grading) {
+    if (round.source_slug !== 'word-scramble') {
+        return;
+    }
+    const answer = Array.from(String(grading.expected_answer || ''));
+    const tokens = dom.roundVisual.querySelectorAll('.letter-tile');
+    tokens.forEach((token, index) => {
+        token.textContent = answer[index] || '';
+        token.dataset.reviewState = 'answer';
+    });
+    dom.roundVisual.dataset.solution = 'true';
+}
+
+
+function annotateSpatialReview(round, review) {
+    if (round.source_slug === 'direction-focus') {
+        const targetIds = new Set(
+            Array.isArray(review.target_item_ids)
+                ? review.target_item_ids.map(String)
+                : [],
+        );
+        dom.roundVisual.querySelectorAll('.motion-item').forEach((item) => {
+            if (targetIds.has(String(item.dataset.itemId || ''))) {
+                item.dataset.reviewState = 'answer';
+            }
+        });
+    }
+    if (round.source_slug === 'symbol-match') {
+        const mismatchIndices = Array.isArray(review.mismatch_indices)
+            ? review.mismatch_indices
+            : [];
+        if (round.data?.render_mode === 'polycube_3d') {
+            const mismatchSet = new Set(
+                mismatchIndices.map(Number).filter(Number.isInteger),
+            );
+            dom.roundVisual.querySelectorAll(
+                '.polycube-model--right [data-cube-indices]',
+            ).forEach((cell) => {
+                const cubeIndices = String(
+                    cell.dataset.cubeIndices || '',
+                ).split(',').map(Number);
+                if (cubeIndices.some((index) => mismatchSet.has(index))) {
+                    cell.dataset.reviewState = 'mismatch';
+                }
+            });
+            if (review.matches === true) {
+                dom.roundVisual.querySelectorAll(
+                    '.polycube-model',
+                ).forEach((model) => {
+                    model.dataset.reviewState = 'match';
+                });
+            }
+            instrumentVisuals?.showReview(review);
+            return;
+        }
+        mismatchIndices.forEach((rawIndex) => {
+            const target = dom.roundVisual.querySelector(
+                `.symbol-token[data-side="right"][data-index="${Number(rawIndex)}"]`,
+            );
+            if (target) {
+                target.dataset.reviewState = 'mismatch';
+            }
+        });
+        if (review.matches === true) {
+            dom.roundVisual.dataset.reviewMatch = 'true';
+        }
+    }
+    instrumentVisuals?.showReview(review);
+}
+
+
+function annotateRecallReview(round, review) {
+    if (round.source_slug === 'memory-matrix') {
+        const targets = new Set(
+            Array.isArray(review.target_indices)
+                ? review.target_indices.map(Number)
+                : [],
+        );
+        const selections = new Set(matrixSelection(dom.roundVisual));
+        dom.roundVisual.dataset.recallPhase = 'review';
+        const gridSize = Math.max(
+            2,
+            Number(round.data?.grid_size || 3),
+        );
+        const targetLabels = Array.from(targets).map((index) => (
+            `row ${Math.floor(index / gridSize) + 1}, `
+            + `column ${(index % gridSize) + 1}`
+        ));
+        const incorrectLabels = Array.from(selections)
+            .filter((index) => !targets.has(index))
+            .map((index) => (
+                `row ${Math.floor(index / gridSize) + 1}, `
+                + `column ${(index % gridSize) + 1}`
+            ));
+        dom.roundVisual.setAttribute(
+            'aria-label',
+            (
+                `Memory Matrix review. Correct tiles: ${
+                    targetLabels.join('; ')
+                }. Incorrect selections: ${
+                    incorrectLabels.length > 0
+                        ? incorrectLabels.join('; ')
+                        : 'none'
+                }.`
+            ),
+        );
+        dom.roundVisual.querySelectorAll('.memory-matrix__tile').forEach(
+            (tile) => {
+                const index = Number(tile.dataset.index);
+                const selected = tile.dataset.selected === 'true';
+                const coordinate = (
+                    `Row ${Math.floor(index / gridSize) + 1}, column ${
+                        (index % gridSize) + 1
+                    }`
+                );
+                if (targets.has(index) && selected) {
+                    tile.dataset.selectionOutcome = 'correct';
+                    tile.dataset.reviewState = 'answer';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Correct selection.`,
+                    );
+                } else if (targets.has(index)) {
+                    tile.dataset.selectionOutcome = 'missed';
+                    tile.dataset.reviewState = 'answer';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Correct tile, not selected.`,
+                    );
+                } else if (selected) {
+                    tile.dataset.selectionOutcome = 'incorrect';
+                    tile.dataset.reviewState = 'submitted';
+                    tile.setAttribute(
+                        'aria-label',
+                        `${coordinate}. Incorrect selection.`,
+                    );
+                }
+            },
+        );
+    }
+    if (round.source_slug === 'pinball-recall') {
+        dom.roundVisual.dataset.recallPhase = 'review';
+        dom.roundVisual.setAttribute(
+            'aria-label',
+            (
+                `Pinball Recall review. The ball entered at ${
+                    String(round.data?.entry_port || '').toUpperCase()
+                } and exited at ${String(review.exit || '').toUpperCase()}.`
+            ),
+        );
+        const pathCells = new Set(
+            (Array.isArray(review.path) ? review.path : []).map(
+                (cell) => `${Number(cell?.[0])}:${Number(cell?.[1])}`,
+            ),
+        );
+        dom.roundVisual.querySelectorAll('.pinball-cell').forEach((cell) => {
+            const key = `${Number(cell.dataset.row)}:${
+                Number(cell.dataset.column)
+            }`;
+            if (pathCells.has(key)) {
+                cell.dataset.path = 'true';
+            }
+        });
+        dom.roundVisual.querySelectorAll('.pinball-port').forEach((port) => {
+            if (
+                normalisedAnswer(port.dataset.port)
+                === normalisedAnswer(review.exit)
+            ) {
+                port.dataset.reviewState = 'answer';
+            }
+        });
+    }
+}
+
+
+function showWrongAnswerReview(round, grading, submittedControl) {
+    const review = grading.review && typeof grading.review === 'object'
+        ? grading.review
+        : {};
+    dom.activeState.dataset.feedback = 'wrong';
+    dom.activeState.dataset.review = 'true';
+    dom.roundVisual.dataset.review = 'true';
+    markReviewedControls(grading, submittedControl);
+    revealNumberMemoryReview(round, grading);
+    annotateProgressionReview(round, grading);
+    annotateScrambleReview(round, grading);
+    annotateSpatialReview(round, review);
+    annotateRecallReview(round, review);
+    const sourceName = round.source_name || state.selected.name;
+    const sourceSlug = grading.source_slug || round.source_slug;
+    setAnswerReviewFeedback(sourceName, sourceSlug, grading, review);
 }
 
 
@@ -1006,6 +1615,851 @@ function symbolAccessibilityLabel(data) {
 }
 
 
+function spatialRenderMode(data) {
+    const mode = String(data?.render_mode || '').toLowerCase();
+    return THREE_D_RENDER_MODES.has(mode)
+        ? mode
+        : null;
+}
+
+
+function directionArrowRotation(tokenData) {
+    if (tokenData.rotation !== null) {
+        return tokenData.rotation;
+    }
+    const rotations = {
+        '↑': 0,
+        '↗': 45,
+        '→': 90,
+        '↘': 135,
+        '↓': 180,
+        '↙': 225,
+        '←': 270,
+        '↖': 315,
+    };
+    return rotations[tokenData.glyph] ?? null;
+}
+
+
+function createDirectionArrow(direction = '') {
+    const arrow = document.createElement('span');
+    arrow.className = 'direction-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.append(
+        createTextElement('span', 'direction-arrow__shaft', ''),
+        createTextElement('span', 'direction-arrow__head', ''),
+    );
+
+    const depthDirection = String(direction).toLowerCase();
+    const isToward = new Set(['toward', 'towards', 'forward']).has(
+        depthDirection,
+    );
+    const isAway = new Set(['away', 'backward']).has(depthDirection);
+    if (isToward || isAway) {
+        arrow.classList.add(
+            'direction-arrow--depth',
+            isToward
+                ? 'direction-arrow--toward'
+                : 'direction-arrow--away',
+        );
+        const cue = createTextElement(
+            'span',
+            'direction-arrow__depth-cue',
+            '',
+        );
+        if (isAway) {
+            cue.append(
+                createTextElement(
+                    'span',
+                    (
+                        'direction-arrow__cue-stroke '
+                        + 'direction-arrow__cue-stroke--forward'
+                    ),
+                    '',
+                ),
+                createTextElement(
+                    'span',
+                    (
+                        'direction-arrow__cue-stroke '
+                        + 'direction-arrow__cue-stroke--backward'
+                    ),
+                    '',
+                ),
+            );
+        }
+        arrow.append(cue);
+    }
+    return arrow;
+}
+
+
+function direction3DRotation(direction) {
+    const rotations = {
+        up: 0,
+        right: 90,
+        down: 180,
+        left: 270,
+    };
+    return rotations[String(direction || '').toLowerCase()];
+}
+
+
+function direction3DIntrinsicStyle(item) {
+    const value = (key) => String(item?.[key] || '').toLowerCase();
+    const validProfiles = new Set(['triangular', 'square', 'octagonal']);
+    const validHeads = new Set(['narrow', 'wide']);
+    const validShafts = new Set(['short', 'long']);
+
+    const legacySolid = value('solid');
+    let profile = value('profile');
+    if (!validProfiles.has(profile)) {
+        if (legacySolid.includes('tetra')) {
+            profile = 'triangular';
+        } else if (legacySolid.includes('octa')) {
+            profile = 'octagonal';
+        } else if (legacySolid.includes('cube')) {
+            profile = 'square';
+        } else {
+            profile = 'square';
+        }
+    }
+
+    let headStyle = value('head_style');
+    if (!validHeads.has(headStyle)) {
+        headStyle = value('band') === 'split' ? 'wide' : 'narrow';
+    }
+
+    let shaftStyle = value('shaft_style');
+    if (!validShafts.has(shaftStyle)) {
+        shaftStyle = value('beacon') === 'dot' ? 'long' : 'short';
+    }
+    return {profile, headStyle, shaftStyle};
+}
+
+
+function renderDirection3DFallback(round, visual) {
+    const data = round.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const labels = items.map((item) => (
+        String(
+            item?.accessible_label
+            || `${item?.direction || 'unknown'}-pointing arrow`,
+        )
+    ));
+    const instruction = String(
+        data.accessible_instruction
+        || data.instruction
+        || round.prompt
+        || 'Find the unique arrow and report its direction.',
+    ).trim();
+    if (labels.length) {
+        visual.setAttribute(
+            'aria-label',
+            `${instruction} Row by row: ${labels.join('; ')}.`,
+        );
+    }
+
+    const field = document.createElement('div');
+    field.className = (
+        'spatial-3d-fallback direction-3d-fallback arrow-row'
+    );
+    field.setAttribute('aria-hidden', 'true');
+    const columns = Math.max(
+        2,
+        Math.min(6, Math.round(Number(data.grid_columns || 4))),
+    );
+    field.dataset.columns = String(columns);
+    items.forEach((item, index) => {
+        const token = document.createElement('span');
+        token.className = 'arrow-token direction-3d-token';
+        token.dataset.index = String(index);
+        token.dataset.direction = String(item?.direction || '');
+        const style = direction3DIntrinsicStyle(item);
+        token.dataset.profile = style.profile;
+        token.dataset.headStyle = style.headStyle;
+        token.dataset.shaftStyle = style.shaftStyle;
+        const rotation = direction3DRotation(item?.direction);
+        if (Number.isFinite(rotation)) {
+            token.dataset.rotation = String(rotation);
+        }
+        token.append(createDirectionArrow(item?.direction));
+        field.append(token);
+    });
+    visual.append(field);
+}
+
+
+function normaliseCubeList(rawCubes) {
+    if (!Array.isArray(rawCubes)) {
+        return [];
+    }
+    return rawCubes.flatMap((cube, index) => {
+        if (!Array.isArray(cube) || cube.length < 3) {
+            return [];
+        }
+        const coordinates = cube.slice(0, 3).map(Number);
+        if (!coordinates.every(Number.isFinite)) {
+            return [];
+        }
+        return [{
+            coordinates: coordinates.map((value) => Math.round(value)),
+            index,
+        }];
+    });
+}
+
+
+function cubeCoordinateLabel(cubes) {
+    return cubes.map(({coordinates}) => (
+        `(${coordinates.join(', ')})`
+    )).join(', ');
+}
+
+
+function projectionCells(cubes, horizontalAxis, verticalAxis) {
+    if (!cubes.length) {
+        return {width: 1, height: 1, cells: new Map()};
+    }
+    const horizontalValues = cubes.map(
+        ({coordinates}) => coordinates[horizontalAxis],
+    );
+    const verticalValues = cubes.map(
+        ({coordinates}) => coordinates[verticalAxis],
+    );
+    const minimumHorizontal = Math.min(...horizontalValues);
+    const maximumHorizontal = Math.max(...horizontalValues);
+    const minimumVertical = Math.min(...verticalValues);
+    const maximumVertical = Math.max(...verticalValues);
+    const width = Math.min(8, maximumHorizontal - minimumHorizontal + 1);
+    const height = Math.min(8, maximumVertical - minimumVertical + 1);
+    const cells = new Map();
+    cubes.forEach(({coordinates, index}) => {
+        const column = coordinates[horizontalAxis] - minimumHorizontal;
+        const row = maximumVertical - coordinates[verticalAxis];
+        if (column >= width || row >= height) {
+            return;
+        }
+        const key = `${row}:${column}`;
+        const indices = cells.get(key) || [];
+        indices.push(index);
+        cells.set(key, indices);
+    });
+    return {width, height, cells};
+}
+
+
+function renderCubeProjection(cubes, label, horizontalAxis, verticalAxis) {
+    const projection = projectionCells(
+        cubes,
+        horizontalAxis,
+        verticalAxis,
+    );
+    const figure = document.createElement('div');
+    figure.className = 'polycube-projection';
+    figure.dataset.columns = String(projection.width);
+    figure.append(createTextElement(
+        'span',
+        'polycube-projection__label',
+        label,
+    ));
+    const grid = document.createElement('span');
+    grid.className = 'polycube-projection__grid';
+    grid.dataset.columns = String(projection.width);
+    for (
+        let index = 0;
+        index < projection.width * projection.height;
+        index += 1
+    ) {
+        const row = Math.floor(index / projection.width);
+        const column = index % projection.width;
+        const cubeIndices = projection.cells.get(`${row}:${column}`) || [];
+        const cell = document.createElement('span');
+        cell.className = cubeIndices.length
+            ? 'polycube-projection__cell is-filled'
+            : 'polycube-projection__cell';
+        if (cubeIndices.length) {
+            cell.dataset.cubeIndices = cubeIndices.join(',');
+        }
+        grid.append(cell);
+    }
+    figure.append(grid);
+    return figure;
+}
+
+
+function renderPolycubeModel(cubes, side) {
+    const model = document.createElement('div');
+    model.className = `polycube-model polycube-model--${side}`;
+    model.dataset.side = side;
+    model.append(createTextElement(
+        'strong',
+        'polycube-model__label',
+        side.toUpperCase(),
+    ));
+    const projections = document.createElement('div');
+    projections.className = 'polycube-projections';
+    projections.append(
+        renderCubeProjection(cubes, 'FRONT', 0, 1),
+        renderCubeProjection(cubes, 'SIDE', 2, 1),
+        renderCubeProjection(cubes, 'TOP', 0, 2),
+    );
+    model.append(projections);
+    return model;
+}
+
+
+function renderPolycube3DFallback(round, visual) {
+    const data = round.data || {};
+    const leftCubes = normaliseCubeList(data.left_cubes);
+    const rightCubes = normaliseCubeList(data.right_cubes);
+    const instruction = String(
+        data.accessible_instruction
+        || data.instruction
+        || round.prompt
+        || 'Can these two solids match after rotation?',
+    ).trim();
+    visual.setAttribute(
+        'aria-label',
+        (
+            `${instruction} Left solid: `
+            + `${
+                data.accessible_left
+                || `cubes at ${cubeCoordinateLabel(leftCubes)}`
+            }. Right solid: ${
+                data.accessible_right
+                || `cubes at ${cubeCoordinateLabel(rightCubes)}`
+            }.`
+        ),
+    );
+
+    const comparison = document.createElement('div');
+    comparison.className = (
+        'spatial-3d-fallback polycube-fallback'
+    );
+    comparison.setAttribute('aria-hidden', 'true');
+    comparison.append(
+        renderPolycubeModel(leftCubes, 'left'),
+        createTextElement('span', 'polycube-divider', '↔'),
+        renderPolycubeModel(rightCubes, 'right'),
+    );
+    visual.append(comparison);
+}
+
+
+function matrixSelection(visual) {
+    return Array.from(
+        visual.querySelectorAll('.memory-matrix__tile[data-selected="true"]'),
+    ).map((tile) => Number(tile.dataset.index))
+        .filter(Number.isInteger)
+        .sort((first, second) => first - second);
+}
+
+
+function matrixFoundSelection(visual) {
+    return Array.from(
+        visual.querySelectorAll(
+            '.memory-matrix__tile[data-selection-outcome="correct"]',
+        ),
+    ).map((tile) => Number(tile.dataset.index))
+        .filter(Number.isInteger)
+        .sort((first, second) => first - second);
+}
+
+
+function matrixMissCount(visual) {
+    return visual.querySelectorAll(
+        '.memory-matrix__tile[data-selection-outcome="incorrect"]',
+    ).length;
+}
+
+
+function updateMatrixCounter(visual, requiredCount, maxMisses) {
+    const foundCount = matrixFoundSelection(visual).length;
+    const missCount = matrixMissCount(visual);
+    const counter = visual.querySelector('.memory-matrix__counter');
+    if (counter) {
+        counter.textContent = (
+            `${foundCount} / ${requiredCount} found`
+            + ` · ${missCount} / ${maxMisses} misses`
+        );
+    }
+    if (visual.dataset.recallPhase !== 'preview') {
+        visual.setAttribute(
+            'aria-label',
+            (
+                `Memory Matrix. ${foundCount} of ${requiredCount} tiles `
+                + `found. ${missCount} of ${maxMisses} misses used.`
+            ),
+        );
+    }
+}
+
+
+function renderMemoryMatrix(round, visual) {
+    const data = round.data || {};
+    const gridSize = Math.max(2, Math.min(9, Number(data.grid_size || 3)));
+    const requiredCount = Math.max(
+        1,
+        Math.min(
+            gridSize * gridSize,
+            Number(data.required_count || 1),
+        ),
+    );
+    const maxMisses = Math.max(
+        1,
+        Math.min(9, Number(data.max_misses || 3)),
+    );
+    const highlighted = new Set(
+        Array.isArray(data.highlighted_indices)
+            ? data.highlighted_indices.map(Number)
+            : [],
+    );
+    visual.classList.add('round-visual--memory-matrix');
+    visual.dataset.recallPhase = 'preview';
+    visual.setAttribute('role', 'group');
+    const highlightedLabels = Array.from(highlighted).map((index) => (
+        `row ${Math.floor(index / gridSize) + 1}, `
+        + `column ${(index % gridSize) + 1}`
+    ));
+    visual.setAttribute(
+        'aria-label',
+        `Memory Matrix preview. Highlighted: ${highlightedLabels.join('; ')}.`,
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'memory-matrix';
+    const counter = createTextElement(
+        'span',
+        'memory-matrix__counter',
+        `0 / ${requiredCount} found · 0 / ${maxMisses} misses`,
+    );
+    counter.setAttribute('aria-live', 'polite');
+    const grid = document.createElement('div');
+    grid.className = 'memory-matrix__grid';
+    grid.dataset.size = String(gridSize);
+    grid.setAttribute(
+        'aria-label',
+        `${gridSize} by ${gridSize} memory grid`,
+    );
+
+    for (let index = 0; index < gridSize * gridSize; index += 1) {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'memory-matrix__tile';
+        tile.dataset.index = String(index);
+        tile.dataset.recallControl = 'true';
+        tile.disabled = true;
+        tile.setAttribute('aria-pressed', 'false');
+        tile.setAttribute(
+            'aria-label',
+            `Row ${Math.floor(index / gridSize) + 1}, column ${
+                (index % gridSize) + 1
+            }`,
+        );
+        if (highlighted.has(index)) {
+            tile.dataset.previewHighlighted = 'true';
+        }
+        tile.addEventListener('click', () => {
+            if (
+                visual.dataset.recallPhase !== 'answer'
+                || state.busy
+                || tile.dataset.selected === 'true'
+            ) {
+                return;
+            }
+            const coordinate = (
+                `Row ${Math.floor(index / gridSize) + 1}, column ${
+                    (index % gridSize) + 1
+                }`
+            );
+            const correctTile = highlighted.has(index);
+            tile.dataset.selected = 'true';
+            tile.dataset.nonAnswer = 'true';
+            tile.dataset.selectionOutcome = correctTile
+                ? 'correct'
+                : 'incorrect';
+            tile.setAttribute('aria-pressed', 'true');
+            tile.setAttribute(
+                'aria-label',
+                `${coordinate}. ${correctTile ? 'Found' : 'Missed'}.`,
+            );
+            tile.disabled = true;
+            audio.cue(correctTile ? 'tile' : 'tileWrong');
+            updateMatrixCounter(visual, requiredCount, maxMisses);
+
+            const found = matrixFoundSelection(visual);
+            const misses = matrixMissCount(visual);
+            if (found.length === requiredCount) {
+                submitAnswer(
+                    found.join(','),
+                    tile,
+                    {inputCue: false},
+                );
+            } else if (misses >= maxMisses) {
+                submitAnswer(
+                    matrixSelection(visual).join(','),
+                    tile,
+                    {inputCue: false},
+                );
+            }
+        });
+        grid.append(tile);
+    }
+    shell.append(counter, grid);
+    visual.replaceChildren(shell);
+    updateMatrixCounter(visual, requiredCount, maxMisses);
+}
+
+
+function clampedUnit(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return 0.5;
+    }
+    return Math.max(0, Math.min(1, numeric));
+}
+
+
+function motionPoint(rawPoint) {
+    const point = Array.isArray(rawPoint) ? rawPoint : [];
+    return [
+        clampedUnit(point[0]),
+        clampedUnit(point[1]),
+    ];
+}
+
+
+function renderMotionDirection(round, visual) {
+    const data = round.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const hasDistractors = items.some(
+        (item) => item?.visual_role === 'distractor',
+    );
+    visual.classList.add('round-visual--motion-direction');
+    visual.setAttribute('role', 'group');
+    visual.setAttribute(
+        'aria-label',
+        [
+            data.accessible_instruction
+            || data.instruction
+            || round.prompt
+            || 'Track the movement direction.',
+            ...items.filter((item) => (
+                !hasDistractors || item?.visual_role === 'target'
+            )).map((item) => item?.accessible_label).filter(Boolean),
+        ].join(' '),
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'motion-direction';
+    if (hasDistractors) {
+        shell.append(createTextElement(
+            'span',
+            'motion-direction__legend',
+            'TRACK THE MARKED GROUP',
+        ));
+    }
+    const field = document.createElement('div');
+    field.className = 'motion-field';
+    field.dataset.hasDistractors = hasDistractors ? 'true' : 'false';
+    field.setAttribute('aria-hidden', 'true');
+    const stage = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'svg',
+    );
+    stage.classList.add('motion-stage');
+    stage.setAttribute('viewBox', '0 0 100 50');
+    stage.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    const trails = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'g',
+    );
+    trails.classList.add('motion-trails');
+    const reducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+    ).matches;
+
+    items.forEach((item, index) => {
+        const start = motionPoint(item?.trail?.start);
+        const end = motionPoint(item?.trail?.end);
+        const center = motionPoint(item?.position);
+        const vector = Array.isArray(item?.motion_vector)
+            ? item.motion_vector.map(Number)
+            : [];
+        const hasCardinalVector = (
+            vector.length === 2
+            && vector.every(Number.isFinite)
+            && Math.hypot(vector[0], vector[1]) === 1
+        );
+        const authoredTravel = Number(item?.animation?.travel);
+        const stageTravel = Math.max(
+            2.5,
+            Math.min(
+                20,
+                (Number.isFinite(authoredTravel) ? authoredTravel : 0.18)
+                * 50,
+            ),
+        );
+        const startPoint = hasCardinalVector
+            ? [
+                (center[0] * 100) - (vector[0] * stageTravel / 2),
+                (center[1] * 50) - (vector[1] * stageTravel / 2),
+            ]
+            : [start[0] * 100, start[1] * 50];
+        const endPoint = hasCardinalVector
+            ? [
+                (center[0] * 100) + (vector[0] * stageTravel / 2),
+                (center[1] * 50) + (vector[1] * stageTravel / 2),
+            ]
+            : [end[0] * 100, end[1] * 50];
+        const role = item?.visual_role === 'target'
+            ? 'target'
+            : 'distractor';
+        const line = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'line',
+        );
+        line.setAttribute('x1', String(startPoint[0]));
+        line.setAttribute('y1', String(startPoint[1]));
+        line.setAttribute('x2', String(endPoint[0]));
+        line.setAttribute('y2', String(endPoint[1]));
+        line.dataset.role = role;
+        trails.append(line);
+        const endpoint = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'circle',
+        );
+        endpoint.setAttribute('cx', String(endPoint[0]));
+        endpoint.setAttribute('cy', String(endPoint[1]));
+        endpoint.setAttribute('r', hasDistractors && role === 'target'
+            ? '0.8'
+            : '0.48');
+        endpoint.dataset.role = role;
+        trails.append(endpoint);
+
+        const movingItem = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'g',
+        );
+        movingItem.classList.add('motion-item');
+        movingItem.dataset.itemId = String(
+            item?.item_id || `motion-${index + 1}`,
+        );
+        movingItem.dataset.role = role;
+        const restingPoint = reducedMotion ? endPoint : startPoint;
+        movingItem.setAttribute(
+            'transform',
+            `translate(${restingPoint[0]} ${restingPoint[1]})`,
+        );
+        const duration = Math.max(
+            550,
+            Math.min(2600, Number(item?.animation?.duration_ms || 1400)),
+        );
+        const delay = Math.max(
+            0,
+            Math.min(500, Number(item?.animation?.delay_ms || 0)),
+        );
+        if (!reducedMotion) {
+            const animation = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'animateTransform',
+            );
+            animation.setAttribute('attributeName', 'transform');
+            animation.setAttribute('type', 'translate');
+            animation.setAttribute(
+                'values',
+                (
+                    `${startPoint.join(' ')};`
+                    + `${startPoint.join(' ')};`
+                    + `${endPoint.join(' ')};`
+                    + `${endPoint.join(' ')}`
+                ),
+            );
+            animation.setAttribute('keyTimes', '0;0.1;0.82;1');
+            animation.setAttribute('dur', `${duration}ms`);
+            animation.setAttribute('begin', `${delay}ms`);
+            animation.setAttribute('repeatCount', 'indefinite');
+            movingItem.append(animation);
+        }
+
+        if (hasDistractors && role === 'target') {
+            const ring = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'circle',
+            );
+            ring.classList.add('motion-target-ring');
+            ring.setAttribute('r', '3.2');
+            movingItem.append(ring);
+            const marker = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'circle',
+            );
+            marker.classList.add('motion-target-marker');
+            marker.setAttribute('cy', '-4.4');
+            marker.setAttribute('r', '0.55');
+            movingItem.append(marker);
+        }
+        const arrow = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'polygon',
+        );
+        arrow.classList.add('motion-arrow');
+        arrow.setAttribute(
+            'points',
+            '0,-2.7 2.5,-0.35 0.9,-0.35 0.9,2.7 '
+            + '-0.9,2.7 -0.9,-0.35 -2.5,-0.35',
+        );
+        const rotation = Number(item?.rotation_deg);
+        arrow.setAttribute(
+            'transform',
+            `rotate(${Number.isFinite(rotation) ? rotation : 0})`,
+        );
+        movingItem.append(arrow);
+        stage.append(movingItem);
+    });
+    stage.prepend(trails);
+    field.append(stage);
+    shell.append(field);
+    visual.replaceChildren(shell);
+}
+
+
+function pinballPortData(rawPort, gridSize) {
+    const label = String(rawPort || '').trim().toUpperCase();
+    const match = label.match(/^([NESW])(\d+)$/);
+    if (!match) {
+        return null;
+    }
+    const index = Number(match[2]);
+    if (!Number.isInteger(index) || index < 1 || index > gridSize) {
+        return null;
+    }
+    return {label, side: match[1], index: index - 1};
+}
+
+
+function renderPinballRecall(round, visual) {
+    const data = round.data || {};
+    const gridSize = Math.max(3, Math.min(8, Number(data.grid_size || 4)));
+    const bumpers = Array.isArray(data.bumpers) ? data.bumpers : [];
+    const bumperMap = new Map();
+    bumpers.forEach((bumper) => {
+        const row = Number(bumper?.cell?.[0]);
+        const column = Number(bumper?.cell?.[1]);
+        const orientation = bumper?.orientation === '\\' ? '\\' : '/';
+        if (
+            Number.isInteger(row)
+            && Number.isInteger(column)
+            && row >= 0
+            && row < gridSize
+            && column >= 0
+            && column < gridSize
+        ) {
+            bumperMap.set(`${row}:${column}`, orientation);
+        }
+    });
+    const entryPort = String(data.entry_port || '').toUpperCase();
+    visual.classList.add('round-visual--pinball-recall');
+    visual.dataset.recallPhase = 'preview';
+    visual.setAttribute('role', 'group');
+    visual.setAttribute(
+        'aria-label',
+        [
+            data.accessible_instruction || 'Memorize the mirror board.',
+            ...bumpers.map((bumper) => bumper?.accessible_label)
+                .filter(Boolean),
+        ].join(' '),
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'pinball-recall';
+    shell.dataset.size = String(gridSize);
+    const note = createTextElement(
+        'span',
+        'pinball-recall__note',
+        `${bumperMap.size} mirrors · entry appears next`,
+    );
+    const frame = document.createElement('div');
+    frame.className = 'pinball-board-frame';
+    const rails = new Map();
+    ['N', 'E', 'S', 'W'].forEach((side) => {
+        const rail = document.createElement('div');
+        rail.className = 'pinball-rail';
+        rail.dataset.side = side;
+        rails.set(side, rail);
+        frame.append(rail);
+    });
+    const board = document.createElement('div');
+    board.className = 'pinball-board';
+    for (let row = 0; row < gridSize; row += 1) {
+        for (let column = 0; column < gridSize; column += 1) {
+            const cell = document.createElement('span');
+            cell.className = 'pinball-cell';
+            cell.dataset.row = String(row);
+            cell.dataset.column = String(column);
+            const bumper = bumperMap.get(`${row}:${column}`);
+            if (bumper) {
+                cell.dataset.bumper = 'true';
+                cell.append(createTextElement(
+                    'span',
+                    'pinball-bumper',
+                    bumper,
+                ));
+            }
+            board.append(cell);
+        }
+    }
+    frame.append(board);
+
+    const ports = Array.isArray(data.perimeter_ports)
+        ? data.perimeter_ports
+        : [];
+    ports.forEach((rawPort) => {
+        const portData = pinballPortData(rawPort, gridSize);
+        if (!portData) {
+            return;
+        }
+        const button = createTextElement(
+            'button',
+            'pinball-port',
+            portData.label,
+        );
+        button.type = 'button';
+        button.disabled = true;
+        button.dataset.recallControl = 'true';
+        button.dataset.port = portData.label;
+        button.dataset.side = portData.side;
+        button.dataset.portIndex = String(portData.index);
+        if (portData.label === entryPort) {
+            button.dataset.entry = 'true';
+            button.dataset.nonAnswer = 'true';
+            button.setAttribute(
+                'aria-label',
+                `${portData.label}, ball entry port`,
+            );
+        } else {
+            button.setAttribute(
+                'aria-label',
+                `Choose exit port ${portData.label}`,
+            );
+        }
+        button.addEventListener('click', () => {
+            if (
+                visual.dataset.recallPhase !== 'answer'
+                || state.busy
+                || button.dataset.nonAnswer === 'true'
+            ) {
+                return;
+            }
+            submitAnswer(portData.label, button);
+        });
+        rails.get(portData.side)?.append(button);
+    });
+    shell.append(note, frame);
+    visual.replaceChildren(shell);
+}
+
+
 function renderGenericVisual(round) {
     const visual = dom.roundVisual;
     const data = round.data || {};
@@ -1014,6 +2468,31 @@ function renderGenericVisual(round) {
     visual.className = `round-visual round-visual--${kind}`;
     visual.setAttribute('role', 'img');
     visual.setAttribute('aria-label', round.prompt || 'Current challenge');
+
+    const namedRenderMode = String(data.render_mode || '').toLowerCase();
+    if (namedRenderMode === 'memory_matrix') {
+        renderMemoryMatrix(round, visual);
+        return;
+    }
+    if (namedRenderMode === 'motion_direction_2d') {
+        renderMotionDirection(round, visual);
+        return;
+    }
+    if (namedRenderMode === 'pinball_recall') {
+        renderPinballRecall(round, visual);
+        return;
+    }
+
+    const renderMode = spatialRenderMode(data);
+    if (renderMode) {
+        visual.classList.add('round-visual--spatial-3d');
+        if (renderMode === 'direction_3d') {
+            renderDirection3DFallback(round, visual);
+        } else {
+            renderPolycube3DFallback(round, visual);
+        }
+        return;
+    }
 
     if (
         kind === 'direction'
@@ -1063,10 +2542,11 @@ function renderGenericVisual(round) {
             row.dataset.columns = String(directionData.columns);
         }
         row.setAttribute('aria-hidden', 'true');
-        directionData.arrows.forEach((arrow) => {
+        directionData.arrows.forEach((arrow, index) => {
             const tokenData = arrowTokenData(arrow);
             const token = document.createElement('span');
             token.className = 'arrow-token';
+            token.dataset.index = String(index);
             if (typeof arrow === 'object' && arrow !== null) {
                 const frame = String(arrow.frame || '').toLowerCase();
                 const marker = String(arrow.marker || '').toLowerCase();
@@ -1084,14 +2564,11 @@ function renderGenericVisual(round) {
                     ));
                 }
             }
-            if (tokenData.rotation !== null) {
-                token.dataset.rotation = String(tokenData.rotation);
+            const arrowRotation = directionArrowRotation(tokenData);
+            if (arrowRotation !== null) {
+                token.dataset.rotation = String(arrowRotation);
             }
-            token.append(createTextElement(
-                'span',
-                'arrow-token__glyph',
-                tokenData.glyph,
-            ));
+            token.append(createDirectionArrow());
             row.append(token);
         });
         visual.append(row);
@@ -1126,10 +2603,15 @@ function renderGenericVisual(round) {
             if (patternColumns >= 2) {
                 group.dataset.columns = String(patternColumns);
             }
-            sequence.filter((symbol) => symbol !== null).forEach((symbol) => {
+            sequence.filter((symbol) => symbol !== null).forEach((
+                symbol,
+                symbolIndex,
+            ) => {
                 const tokenData = arrowTokenData(symbol);
                 const token = document.createElement('span');
                 token.className = 'symbol-token';
+                token.dataset.index = String(symbolIndex);
+                token.dataset.side = index === 0 ? 'left' : 'right';
                 if (tokenData.rotation !== null) {
                     token.dataset.rotation = String(tokenData.rotation);
                 }
@@ -1155,15 +2637,17 @@ function renderGenericVisual(round) {
         const sequence = data.sequence || [];
         const row = document.createElement('div');
         row.className = 'sequence-row';
-        sequence.forEach((number) => row.append(
-            createTextElement(
+        sequence.forEach((number, index) => {
+            const token = createTextElement(
                 'span',
                 number === '..' || number === null
                     ? 'sequence-token sequence-token--missing'
                     : 'sequence-token',
                 number === null ? '…' : String(number),
-            ),
-        ));
+            );
+            token.dataset.index = String(index);
+            row.append(token);
+        });
         visual.append(row);
         return;
     }
@@ -1240,6 +2724,48 @@ function revealMemoryAnswer(round) {
         return;
     }
     clearPreviewTimer();
+    const recallMode = String(
+        round.data?.render_mode || '',
+    ).toLowerCase();
+    if (
+        recallMode === 'memory_matrix'
+        || recallMode === 'pinball_recall'
+    ) {
+        const hiddenPrompt = round.hidden_prompt || 'What did you see?';
+        dom.roundVisual.dataset.recallPhase = 'answer';
+        dom.roundVisual.classList.remove('is-hidden');
+        dom.roundVisual.removeAttribute('aria-hidden');
+        dom.roundVisual.setAttribute('aria-label', hiddenPrompt);
+        dom.memoryCurtain.hidden = true;
+        dom.roundPrompt.textContent = hiddenPrompt;
+        dom.answerForm.hidden = true;
+        dom.choiceControls.hidden = true;
+        dom.answerRow.hidden = true;
+        const note = dom.roundVisual.querySelector(
+            '.pinball-recall__note',
+        );
+        if (note) {
+            note.textContent = (
+                `Entry ${String(round.data?.entry_port || '').toUpperCase()}`
+                + ' · choose the exit'
+            );
+        }
+        dom.roundVisual.querySelectorAll(
+            '[data-recall-control]',
+        ).forEach((control) => {
+            control.disabled = control.dataset.nonAnswer === 'true';
+        });
+        if (recallMode === 'memory_matrix') {
+            updateMatrixCounter(
+                dom.roundVisual,
+                Number(round.data?.required_count || 1),
+                Number(round.data?.max_misses || 3),
+            );
+        }
+        currentEnabledAnswerControl()?.focus({preventScroll: true});
+        scheduleCountdownStart(round);
+        return;
+    }
     dom.roundVisual.classList.add('is-hidden');
     dom.roundVisual.setAttribute('aria-hidden', 'true');
     dom.roundVisual.removeAttribute('aria-label');
@@ -1277,7 +2803,7 @@ function beginMemoryPreviewTimer(roundId) {
     if (!memoryPreviewMatches(roundId)) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         preview.paused = true;
         return;
     }
@@ -1312,7 +2838,7 @@ function scheduleMemoryPreviewAfterPaint(roundId, paintedFrames = 0) {
     if (!memoryPreviewMatches(roundId)) {
         return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (gameInteractionIsPaused()) {
         state.preview.paused = true;
         return;
     }
@@ -1361,6 +2887,7 @@ function resumeMemoryPreviewFromVisibility() {
         !preview.roundId
         || !preview.paused
         || !memoryPreviewMatches(preview.roundId)
+        || gameInteractionIsPaused()
     ) {
         return;
     }
@@ -1375,7 +2902,7 @@ function startMemoryPreview(round) {
     state.preview.roundId = round.round_id;
     state.preview.totalMs = delay;
     state.preview.remainingMs = delay;
-    state.preview.paused = document.visibilityState === 'hidden';
+    state.preview.paused = gameInteractionIsPaused();
     dom.roundPrompt.textContent = round.data?.instruction
         || instructionBySlug[round.source_slug]
         || 'Memorize this.';
@@ -1399,6 +2926,7 @@ function renderRound(round) {
     state.roundNumber += 1;
     state.busy = false;
     dom.activeState.dataset.feedback = 'idle';
+    delete dom.activeState.dataset.review;
     delete dom.activeState.dataset.levelUp;
     dom.roundSource.textContent = round.source_name || state.selected.name;
     dom.roundSource.dataset.category = categoryClass(
@@ -1420,6 +2948,7 @@ function renderRound(round) {
     dom.roundValue.textContent = String(state.roundNumber);
     dom.answerInput.value = '';
     dom.answerInput.disabled = false;
+    dom.answerInput.removeAttribute('data-review-state');
     dom.submitAnswer.disabled = false;
     dom.answerForm.setAttribute('aria-busy', 'false');
     dom.choiceControls.querySelectorAll('button').forEach((button) => {
@@ -1428,9 +2957,13 @@ function renderRound(round) {
     dom.memoryCurtain.hidden = true;
     dom.roundVisual.classList.remove('is-hidden');
     dom.roundVisual.removeAttribute('aria-hidden');
+    delete dom.roundVisual.dataset.review;
+    delete dom.roundVisual.dataset.reviewMatch;
+    delete dom.roundVisual.dataset.solution;
     setFeedback('', 'neutral');
     updateCycle(round);
     renderGenericVisual(round);
+    instrumentVisuals?.render(round, dom.roundVisual);
     renderChoices(round.choices || []);
 
     if (Number(round.preview_ms || 0) > 0) {
@@ -1458,6 +2991,12 @@ function setControlsDisabled(disabled) {
     dom.choiceControls.querySelectorAll('button').forEach((button) => {
         button.disabled = disabled;
     });
+    dom.roundVisual.querySelectorAll('[data-recall-control]').forEach(
+        (control) => {
+            control.disabled = disabled
+                || control.dataset.nonAnswer === 'true';
+        },
+    );
 }
 
 
@@ -1468,8 +3007,16 @@ function currentEnabledAnswerControl() {
         || state.busy
         || dom.gameView.hidden
         || dom.activeState.hidden
-        || dom.answerForm.hidden
     ) {
+        return null;
+    }
+    const recallControl = dom.roundVisual.querySelector(
+        '[data-recall-control]:not(:disabled)',
+    );
+    if (recallControl) {
+        return recallControl;
+    }
+    if (dom.answerForm.hidden) {
         return null;
     }
     const choice = dom.choiceControls.querySelector(
@@ -1504,7 +3051,12 @@ function restoreCurrentAnswerFocus() {
 }
 
 
-function beginPendingFeedback(control, roundId, timedOut) {
+function beginPendingFeedback(
+        control,
+        roundId,
+        timedOut,
+        playInputCue = true,
+) {
     clearPendingFeedback();
     state.pendingRoundId = roundId;
     state.pendingControl = control;
@@ -1517,7 +3069,7 @@ function beginPendingFeedback(control, roundId, timedOut) {
         timedOut ? 'Time is up — checking…' : 'Checking…',
         'pending',
     );
-    if (!timedOut) {
+    if (!timedOut && playInputCue) {
         audio.cue('click');
     }
     state.pendingTimer = window.setTimeout(() => {
@@ -1720,7 +3272,12 @@ async function submitAnswer(answer, control = null, options = {}) {
             lockTimedOutRound(runId, roundId, requestSequence);
         }
     }
-    beginPendingFeedback(submittedControl, roundId, timedOut);
+    beginPendingFeedback(
+        submittedControl,
+        roundId,
+        timedOut,
+        options.inputCue !== false,
+    );
     setControlsDisabled(true);
 
     // Let the pressed state and checking message paint before network work.
@@ -1753,14 +3310,18 @@ async function submitAnswer(answer, control = null, options = {}) {
             return;
         }
         clearTimeoutRetry();
-        clearPendingFeedback();
         const runResult = unwrapRun(payload);
         const grading = runResult.result || payload.result || {};
+        const answeredRound = state.round;
+        clearPendingFeedback({
+            preserveSubmitted: grading.correct !== true,
+        });
         state.run = {...state.run, ...runResult};
         updateHud();
-        const sourceName = state.round.source_name || state.selected.name;
+        const sourceName = answeredRound.source_name || state.selected.name;
         if (grading.correct) {
             dom.activeState.dataset.feedback = 'correct';
+            markReviewedControls(grading, submittedControl);
             if (grading.leveled_up) {
                 dom.activeState.dataset.levelUp = 'true';
                 setFeedback(
@@ -1775,36 +3336,42 @@ async function submitAnswer(answer, control = null, options = {}) {
             }
             audio.cue('correct');
         } else {
-            dom.activeState.dataset.feedback = 'wrong';
-            const expected = grading.expected_answer;
-            const message = grading.timed_out
-                ? `${sourceName}: time ran out. The answer was ${expected}.`
-                : `${sourceName}: not quite. The answer was ${expected}.`;
-            setFeedback(message, 'wrong');
+            showWrongAnswerReview(
+                answeredRound,
+                grading,
+                submittedControl,
+            );
             audio.cue('wrong');
         }
 
+        const transitionDelay = grading.correct
+            ? (
+                grading.leveled_up
+                    ? LEVEL_UP_ADVANCE_MS
+                    : CORRECT_ADVANCE_MS
+            )
+            : answerReviewDelay(answeredRound, grading, runResult);
         if (runResult.game_over || runResult.ended || !runResult.round) {
             const completedRunId = state.run.run_id;
-            state.transitionTimer = window.setTimeout(
+            scheduleAnswerTransition(
+                transitionDelay,
                 () => {
-                    state.transitionTimer = null;
                     if (state.run?.run_id === completedRunId) {
                         finishRun(runResult);
                     }
                 },
-                FEEDBACK_DELAY + 120,
+                {skippable: grading.correct !== true},
             );
         } else {
             const activeRunId = state.run.run_id;
-            state.transitionTimer = window.setTimeout(
+            scheduleAnswerTransition(
+                transitionDelay,
                 () => {
-                    state.transitionTimer = null;
                     if (state.run?.run_id === activeRunId) {
                         renderRound(runResult.round);
                     }
                 },
-                FEEDBACK_DELAY,
+                {skippable: grading.correct !== true},
             );
         }
     } catch (error) {
@@ -1883,6 +3450,7 @@ function resultRunIsCurrent(runId, game, startSequence) {
 
 async function finishRun(result) {
     clearPreviewTimer();
+    clearTransitionTimer();
     clearPendingFeedback();
     clearTimeoutRetry();
     clearCountdown();
@@ -1907,9 +3475,13 @@ async function finishRun(result) {
     dom.runStatus.textContent = 'Test complete';
     showState('result');
     dom.resultScore.textContent = String(score);
-    dom.resultBest.textContent = isBest
-        ? `${score} NEW`
-        : String(previousBest ?? '—');
+    dom.resultBest.textContent = ranked
+        ? (
+            isBest
+                ? `${score} NEW`
+                : String(previousBest ?? '—')
+        )
+        : 'Not saved';
     dom.resultBest.dataset.best = String(isBest);
     const remainingLives = Math.max(
         0,
@@ -1933,15 +3505,11 @@ async function finishRun(result) {
     dom.resultMessage.textContent = ranked
         ? resultMessage
         : `${resultMessage} Practice scores are not ranked.`;
-    if (dom.resultAverage) {
-        dom.resultAverage.textContent = '…';
-    }
-    if (dom.resultPercentile) {
-        dom.resultPercentile.textContent = '…';
-    }
-    if (dom.resultRank) {
-        dom.resultRank.textContent = '…';
-    }
+    [dom.resultAverage, dom.resultPercentile, dom.resultRank]
+        .filter(Boolean)
+        .forEach((element) => {
+            element.textContent = ranked ? '…' : '—';
+        });
     if (isBest) {
         audio.cue('best');
     } else {
@@ -1952,10 +3520,15 @@ async function finishRun(result) {
             dom.retryButton?.focus();
         }
     }, 0);
-    await Promise.all([
+    const resultRequests = [
         refreshPersonalBests({shouldApply: resultIsCurrent}),
-        refreshResultBenchmark(completedGame, score, resultIsCurrent),
-    ]);
+    ];
+    if (ranked) {
+        resultRequests.push(
+            refreshResultBenchmark(completedGame, score, resultIsCurrent),
+        );
+    }
+    await Promise.all(resultRequests);
 }
 
 
@@ -2159,21 +3732,46 @@ async function renderLeaderboard() {
 }
 
 
+function pauseGameForDialog() {
+    pauseAnswerTransitionForVisibility();
+    pauseCountdownForVisibility();
+    pauseMemoryPreviewForVisibility();
+}
+
+
+function resumeGameAfterDialog() {
+    resumeAnswerTransitionFromVisibility();
+    resumeCountdownFromVisibility();
+    resumeMemoryPreviewFromVisibility();
+}
+
+
 async function openLeaderboard() {
+    if (leaderboardIsOpen()) {
+        return;
+    }
+    pauseGameForDialog();
     dom.leaderboardFilter.replaceChildren();
     const allOption = new Option('All games', '');
     dom.leaderboardFilter.append(allOption);
     state.catalog.forEach((game) => {
         dom.leaderboardFilter.append(new Option(game.name, game.slug));
     });
-    const rendered = await renderLeaderboard();
-    if (!rendered) {
+    state.leaderboardOpen = true;
+    try {
+        if (typeof dom.leaderboardDialog.showModal === 'function') {
+            dom.leaderboardDialog.showModal();
+        } else {
+            dom.leaderboardDialog.hidden = false;
+        }
+    } catch (_error) {
+        state.leaderboardOpen = false;
+        resumeGameAfterDialog();
         return;
     }
-    if (typeof dom.leaderboardDialog.showModal === 'function') {
-        dom.leaderboardDialog.showModal();
-    } else {
-        dom.leaderboardDialog.hidden = false;
+    const rendered = await renderLeaderboard();
+    if (!rendered && leaderboardIsOpen()) {
+        closeLeaderboard();
     }
 }
 
@@ -2183,7 +3781,9 @@ function closeLeaderboard() {
     if (typeof dom.leaderboardDialog.close === 'function') {
         dom.leaderboardDialog.close();
     } else {
+        state.leaderboardOpen = false;
         dom.leaderboardDialog.hidden = true;
+        resumeGameAfterDialog();
         restoreCurrentAnswerFocus();
     }
 }
@@ -2192,6 +3792,16 @@ function closeLeaderboard() {
 function bindEvents() {
     dom.startRunButton?.addEventListener('click', startRun);
     dom.retryButton?.addEventListener('click', startRun);
+    dom.timingMode?.addEventListener('change', () => {
+        const configuredMaxLevel = Number(state.selected?.max_level || 5);
+        const maxLevel = Number.isFinite(configuredMaxLevel)
+            ? Math.max(1, Math.round(configuredMaxLevel))
+            : 5;
+        updatePracticeLevelNote(maxLevel);
+    });
+    dom.reviewContinue?.addEventListener('click', () => {
+        advanceAnswerTransition({manual: true});
+    });
     dom.resultMenuButton?.addEventListener('click', () => backToHome());
     dom.backButton?.addEventListener('click', () => backToHome());
     dom.answerForm?.addEventListener('submit', (event) => {
@@ -2208,6 +3818,8 @@ function bindEvents() {
     });
     dom.leaderboardDialog?.addEventListener('close', () => {
         invalidateLeaderboardRequests();
+        state.leaderboardOpen = false;
+        resumeGameAfterDialog();
         restoreCurrentAnswerFocus();
     });
 
@@ -2235,6 +3847,17 @@ function bindEvents() {
         if (event.key === 'Escape' && !dom.gameView.hidden) {
             event.preventDefault();
             backToHome();
+            return;
+        }
+        if (
+            state.answerTransition.callback
+            && state.answerTransition.skippable
+            && !leaderboardIsOpen()
+            && dom.activeState.contains(document.activeElement)
+            && (event.key === 'Enter' || event.key === ' ')
+        ) {
+            event.preventDefault();
+            advanceAnswerTransition({manual: true});
             return;
         }
         if (dom.gameView.hidden || dom.activeState.hidden || state.busy) {
@@ -2268,10 +3891,12 @@ function bindEvents() {
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
+            pauseAnswerTransitionForVisibility();
             pauseCountdownForVisibility();
             pauseMemoryPreviewForVisibility();
             return;
         }
+        resumeAnswerTransitionFromVisibility();
         resumeCountdownFromVisibility();
         resumeMemoryPreviewFromVisibility();
     });
@@ -2291,6 +3916,7 @@ function bindEvents() {
 async function initialise() {
     cacheDom();
     audio = new ArcadeAudio(dom.soundToggle);
+    instrumentVisuals = new InstrumentVisuals();
     bindEvents();
 
     try {

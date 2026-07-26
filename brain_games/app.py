@@ -550,6 +550,27 @@ def _parse_score(raw_score):
     return score, None
 
 
+def _run_start_level(payload):
+    start_level = payload.get('start_level', 1)
+    if isinstance(start_level, bool) or not isinstance(start_level, int):
+        return None, _error_response(
+            'invalid_request',
+            'start_level must be an integer.',
+            400,
+        )
+    game = CATALOG_BY_SLUG.get(str(payload.get('game', '')).strip().casefold())
+    if game is not None and not 1 <= start_level <= game['max_level']:
+        return None, _error_response(
+            'invalid_request',
+            'start_level must be between 1 and {} for {}.'.format(
+                game['max_level'],
+                game['name'],
+            ),
+            400,
+        )
+    return start_level, None
+
+
 @routes.post('/api/runs')
 def create_run():
     payload, error = _request_payload(('game',))
@@ -561,7 +582,7 @@ def create_run():
     if not valid_timing_mode:
         return _error_response(
             'invalid_request',
-            'timing_mode must be standard, relaxed, or self-paced.',
+            'timing_mode must be standard or self-paced.',
             400,
         )
     player, identity_error = _run_player(payload)
@@ -573,12 +594,16 @@ def create_run():
             'game and player must be non-empty strings.',
             400,
         )
+    start_level, level_error = _run_start_level(payload)
+    if level_error is not None:
+        return level_error
     return jsonify(
         _public_run(_store().create(
             payload['game'],
             player,
             ranked=timing_mode == 'standard',
             timing_mode=timing_mode,
+            start_level=start_level,
         )),
     ), 201
 

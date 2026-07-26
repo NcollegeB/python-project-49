@@ -12,7 +12,7 @@ stable public release. Tasks are ordered by priority inside each section.
 - [x] Add this tracked roadmap.
 - [x] Add GitHub Actions checks for tests, linting, browser scripts, package
   validation, and package builds.
-- [ ] Confirm the new checks pass on pull request #3.
+- [x] Confirm the new checks pass on pull request #3.
 - [ ] Merge pull request #3 into `main` after the checks and final playtest.
 - [ ] Set `main` as the Vercel production branch after the merge.
 

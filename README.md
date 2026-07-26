@@ -247,6 +247,17 @@ make check
 Individual checks are available through `make lint`, `make selfcheck`, and
 `make web-check`.
 
+## Project status and roadmap
+
+BrainHacker is in active beta. The browser app is live, while gameplay
+balancing, account hardening, deployment cleanup, and launch preparation are
+still in progress.
+
+Current priorities and release blockers are tracked in
+[TO-DO-LIST.md](TO-DO-LIST.md). Pull requests run the Python test suite,
+linting, package validation, browser script checks, and a package build before
+they are merged.
+
 The games are intended for practice and entertainment. BrainHacker is not
 affiliated with a cognitive benchmark or training service and does not claim
 medical benefits.

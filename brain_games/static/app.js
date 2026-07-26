@@ -2095,8 +2095,36 @@ function renderMotionDirection(round, visual) {
     items.forEach((item, index) => {
         const start = motionPoint(item?.trail?.start);
         const end = motionPoint(item?.trail?.end);
-        const startPoint = [start[0] * 100, start[1] * 50];
-        const endPoint = [end[0] * 100, end[1] * 50];
+        const center = motionPoint(item?.position);
+        const vector = Array.isArray(item?.motion_vector)
+            ? item.motion_vector.map(Number)
+            : [];
+        const hasCardinalVector = (
+            vector.length === 2
+            && vector.every(Number.isFinite)
+            && Math.hypot(vector[0], vector[1]) === 1
+        );
+        const authoredTravel = Number(item?.animation?.travel);
+        const stageTravel = Math.max(
+            2.5,
+            Math.min(
+                20,
+                (Number.isFinite(authoredTravel) ? authoredTravel : 0.18)
+                * 50,
+            ),
+        );
+        const startPoint = hasCardinalVector
+            ? [
+                (center[0] * 100) - (vector[0] * stageTravel / 2),
+                (center[1] * 50) - (vector[1] * stageTravel / 2),
+            ]
+            : [start[0] * 100, start[1] * 50];
+        const endPoint = hasCardinalVector
+            ? [
+                (center[0] * 100) + (vector[0] * stageTravel / 2),
+                (center[1] * 50) + (vector[1] * stageTravel / 2),
+            ]
+            : [end[0] * 100, end[1] * 50];
         const role = item?.visual_role === 'target'
             ? 'target'
             : 'distractor';

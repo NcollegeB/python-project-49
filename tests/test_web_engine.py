@@ -323,6 +323,20 @@ class RunStoreTest(unittest.TestCase):
                 self.assertIsInstance(run['round']['choices'], list)
                 assert_no_private_answer(self, run)
 
+    def test_random_factory_requires_uniform_for_motion_layouts(self):
+        source = random.Random(1)
+
+        class MissingUniformRandom:
+            choice = source.choice
+            randint = source.randint
+            randrange = source.randrange
+            sample = source.sample
+            shuffle = source.shuffle
+
+        store = RunStore(random_factory=MissingUniformRandom)
+        with self.assertRaisesRegex(TypeError, 'random-like object'):
+            store.create('direction-focus', 'Ada')
+
     def test_every_game_varies_its_first_round_across_random_seeds(self):
         for game in GAME_CATALOG:
             fingerprints = set()

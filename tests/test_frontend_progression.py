@@ -539,6 +539,8 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 '.motion-target-ring',
                 '.motion-item[data-role="target"]',
                 '.motion-trails circle',
+                '.round-visual[data-review="true"] .motion-trails',
+                'opacity: 0;',
         ):
             self.assertIn(source, self.stylesheet)
         self.assertNotIn('style.setProperty', self.javascript)

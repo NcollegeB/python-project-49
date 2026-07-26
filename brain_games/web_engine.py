@@ -854,7 +854,14 @@ class RunStore:
 
     @staticmethod
     def _validate_rng(rng):
-        methods = ('choice', 'randint', 'randrange', 'sample', 'shuffle')
+        methods = (
+            'choice',
+            'randint',
+            'randrange',
+            'sample',
+            'shuffle',
+            'uniform',
+        )
         if any(not callable(getattr(rng, name, None)) for name in methods):
             raise TypeError('random_factory must return a random-like object')
 

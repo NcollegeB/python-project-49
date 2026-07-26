@@ -2301,11 +2301,15 @@ class RunStore:
         state.rng.shuffle(direction_pool)
 
         if level == 9:
-            solids = ['cube', 'octahedron', 'tetrahedron']
-            state.rng.shuffle(solids)
-            bands = ['ring', 'split']
-            state.rng.shuffle(bands)
-            target_features = (solids[0], bands[0], 'none')
+            profiles = ['triangular', 'square', 'octagonal']
+            state.rng.shuffle(profiles)
+            head_styles = ['narrow', 'wide']
+            state.rng.shuffle(head_styles)
+            target_features = (
+                profiles[0],
+                head_styles[0],
+                'long',
+            )
             non_target_rows = [(5, 3), (6, 2)]
             state.rng.shuffle(non_target_rows)
             count_rows = (
@@ -2314,12 +2318,12 @@ class RunStore:
             )
             remaining_features = []
             feature_counts = []
-            for solid_index, row in enumerate(count_rows):
-                for band_index, count in enumerate(row):
+            for profile_index, row in enumerate(count_rows):
+                for head_index, count in enumerate(row):
                     features = (
-                        solids[solid_index],
-                        bands[band_index],
-                        'none',
+                        profiles[profile_index],
+                        head_styles[head_index],
+                        'long',
                     )
                     if features == target_features:
                         continue
@@ -2327,30 +2331,34 @@ class RunStore:
                     feature_counts.append(count)
             feature_count = 2
             instruction = (
-                'Find the only solid-and-band combination. '
-                'Which 3D direction does its arrow point?'
+                'One arrow has a unique profile and head width. '
+                'Which direction is it pointing?'
             )
         else:
-            solids = ['cube', 'octahedron', 'tetrahedron']
-            state.rng.shuffle(solids)
-            bands = ['ring', 'split']
-            state.rng.shuffle(bands)
-            beacons = ['none', 'dot']
-            state.rng.shuffle(beacons)
-            target_features = (solids[0], bands[0], beacons[0])
+            profiles = ['triangular', 'square', 'octagonal']
+            state.rng.shuffle(profiles)
+            head_styles = ['narrow', 'wide']
+            state.rng.shuffle(head_styles)
+            shaft_styles = ['short', 'long']
+            state.rng.shuffle(shaft_styles)
+            target_features = (
+                profiles[0],
+                head_styles[0],
+                shaft_styles[0],
+            )
             count_rows = (
-                (1, 0, 0, 7),
-                (3, 0, 3, 2),
-                (5, 3, 0, 0),
+                (1, 2, 2, 3),
+                (2, 3, 3, 0),
+                (2, 2, 2, 2),
             )
             remaining_features = []
             feature_counts = []
-            for solid_index, row in enumerate(count_rows):
+            for profile_index, row in enumerate(count_rows):
                 for cell_index, count in enumerate(row):
                     features = (
-                        solids[solid_index],
-                        bands[cell_index // 2],
-                        beacons[cell_index % 2],
+                        profiles[profile_index],
+                        head_styles[cell_index // 2],
+                        shaft_styles[cell_index % 2],
                     )
                     if features == target_features:
                         continue
@@ -2359,8 +2367,8 @@ class RunStore:
                         feature_counts.append(count)
             feature_count = 3
             instruction = (
-                'Find the only solid, band, and beacon combination. '
-                'Which 3D direction does its arrow point?'
+                'One arrow has a unique profile, head width, and shaft '
+                'length. Which direction is it pointing?'
             )
 
         feature_pool = []
@@ -2406,9 +2414,9 @@ class RunStore:
                 'grid_columns': 6,
                 'feature_count': feature_count,
                 'task_mode': (
-                    'spatial_shell_band'
+                    'spatial_profile_head'
                     if level == 9
-                    else 'spatial_shell_band_beacon'
+                    else 'spatial_profile_head_shaft'
                 ),
                 'instruction': instruction,
                 'accessible_instruction': instruction,
@@ -2437,28 +2445,25 @@ class RunStore:
 
     @staticmethod
     def _spatial_direction_item(state, direction, features):
-        solid, band, beacon = features
+        profile, head_style, shaft_style = features
         direction_data = _SPATIAL_DIRECTIONS[direction]
-        beacon_label = (
-            'with beacon' if beacon == 'dot' else 'without beacon'
-        )
         return {
             'direction': direction,
             'direction_vector': list(direction_data['vector']),
             'glyph': direction_data['glyph'],
-            'solid': solid,
-            'band': band,
-            'beacon': beacon,
+            'profile': profile,
+            'head_style': head_style,
+            'shaft_style': shaft_style,
             'spin_phase_deg': state.rng.randrange(360),
             'spin_speed_deg_s': state.rng.choice(
                 (-1, 1),
             ) * state.rng.randint(7, 13),
             'accessible_label': (
-                '{} solid, {} band, {}, arrow pointing {}'
+                '{} profile, {} head, {} shaft, arrow pointing {}'
             ).format(
-                solid,
-                band,
-                beacon_label,
+                profile,
+                head_style,
+                shaft_style,
                 direction_data['label'],
             ),
         }

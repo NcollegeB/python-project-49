@@ -533,9 +533,12 @@ class RunStoreTest(unittest.TestCase):
 
                 def feature_key(item):
                     if level >= 9:
-                        features = [item['solid'], item['band']]
+                        features = [
+                            item['profile'],
+                            item['head_style'],
+                        ]
                         if feature_count >= 3:
-                            features.append(item['beacon'])
+                            features.append(item['shaft_style'])
                         return tuple(features)
                     features = [item['rotation_deg']]
                     if feature_count >= 2:
@@ -1692,9 +1695,12 @@ class DifficultyGeneratorTest(unittest.TestCase):
                 feature_count = data['feature_count']
 
                 def feature_key(item):
-                    features = [item['solid'], item['band']]
+                    features = [
+                        item['profile'],
+                        item['head_style'],
+                    ]
                     if feature_count == 3:
-                        features.append(item['beacon'])
+                        features.append(item['shaft_style'])
                     return tuple(features)
 
                 feature_counts = Counter(map(feature_key, items))
@@ -1708,6 +1714,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                 ]
 
                 self.assertEqual('direction_3d', data['render_mode'])
+                self.assertEqual(24, len(items))
                 self.assertEqual(expected_directions, set(direction_counts))
                 self.assertEqual(
                     {len(items) // len(expected_directions)},
@@ -1724,7 +1731,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     for key, count in feature_counts.items()
                     if key != feature_key(target)
                 ))
-                for feature in ('solid', 'band'):
+                for feature in ('profile', 'head_style'):
                     marginal = Counter(
                         item[feature]
                         for item in items
@@ -1733,14 +1740,14 @@ class DifficultyGeneratorTest(unittest.TestCase):
                 self.assertEqual(
                     [8, 8, 8],
                     sorted(Counter(
-                        item['solid']
+                        item['profile']
                         for item in items
                     ).values()),
                 )
                 self.assertEqual(
                     [12, 12],
                     sorted(Counter(
-                        item['band']
+                        item['head_style']
                         for item in items
                     ).values()),
                 )
@@ -1748,10 +1755,51 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     self.assertEqual(
                         [12, 12],
                         sorted(Counter(
-                            item['beacon']
+                            item['shaft_style']
                             for item in items
                         ).values()),
                     )
+                    self.assertEqual(
+                        {'short', 'long'},
+                        {
+                            item['shaft_style']
+                            for item in items
+                        },
+                    )
+                else:
+                    self.assertEqual(
+                        {'long'},
+                        {
+                            item['shaft_style']
+                            for item in items
+                        },
+                    )
+                self.assertEqual(
+                    {'triangular', 'square', 'octagonal'},
+                    {
+                        item['profile']
+                        for item in items
+                    },
+                )
+                self.assertEqual(
+                    {'narrow', 'wide'},
+                    {
+                        item['head_style']
+                        for item in items
+                    },
+                )
+                self.assertEqual(
+                    (
+                        'spatial_profile_head'
+                        if level == 9
+                        else 'spatial_profile_head_shaft'
+                    ),
+                    data['task_mode'],
+                )
+                self.assertTrue(all(
+                    not {'solid', 'band', 'beacon'}.intersection(item)
+                    for item in items
+                ))
                 self.assertTrue(all(
                     all((
                         7 <= abs(item['spin_speed_deg_s']) <= 13,
@@ -1770,6 +1818,48 @@ class DifficultyGeneratorTest(unittest.TestCase):
                         'target_features',
                     },
                 )
+
+    def test_level_ten_spatial_target_requires_all_three_features(self):
+        feature_names = ('profile', 'head_style', 'shaft_style')
+        for game_round in self._rounds(
+                'direction-focus',
+                10,
+                count=64):
+            items = game_round['public']['data']['items']
+            target = items[game_round['review']['target_index']]
+            target_features = tuple(
+                target[feature]
+                for feature in feature_names
+            )
+            full_feature_counts = Counter(
+                tuple(item[feature] for feature in feature_names)
+                for item in items
+            )
+            self.assertEqual(
+                1,
+                full_feature_counts[target_features],
+            )
+
+            for omitted_feature in feature_names:
+                retained_features = tuple(
+                    feature
+                    for feature in feature_names
+                    if feature != omitted_feature
+                )
+                matches = [
+                    item
+                    for item in items
+                    if all(
+                        item[feature] == target[feature]
+                        for feature in retained_features
+                    )
+                ]
+                with self.subTest(omitted_feature=omitted_feature):
+                    self.assertGreater(len(matches), 1)
+                    self.assertTrue(any(
+                        item[omitted_feature] != target[omitted_feature]
+                        for item in matches
+                    ))
 
     @staticmethod
     def _angular_difference(first, second):

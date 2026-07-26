@@ -24,31 +24,70 @@ void main() {
 const SOLID_VERTEX_SHADER = `
 attribute vec3 a_position;
 attribute vec3 a_normal;
+attribute float a_surface_cue;
 uniform mat4 u_world;
 uniform mat4 u_world_view_projection;
 varying vec3 v_normal;
+varying vec3 v_model_position;
+varying float v_surface_cue;
 
 void main() {
     gl_Position = u_world_view_projection * vec4(a_position, 1.0);
     v_normal = mat3(u_world) * a_normal;
+    v_model_position = a_position;
+    v_surface_cue = a_surface_cue;
 }
 `;
 
 const SOLID_FRAGMENT_SHADER = `
 precision mediump float;
 uniform vec4 u_color;
+uniform vec4 u_cue_color;
 uniform vec3 u_light_direction;
+uniform float u_cue_mode;
+uniform float u_cue_strength;
 varying vec3 v_normal;
+varying vec3 v_model_position;
+varying float v_surface_cue;
 
 void main() {
     vec3 normal = normalize(v_normal);
     float diffuse = max(dot(normal, normalize(u_light_direction)), 0.0);
     float light = 0.44 + (0.56 * diffuse);
-    gl_FragColor = vec4(u_color.rgb * light, u_color.a);
+    vec3 shaded_color = u_color.rgb * light;
+    float dot_mask = (
+        1.0 - smoothstep(0.025, 0.052, length(v_model_position.xz))
+    ) * step(0.5, v_surface_cue)
+        * step(0.5, u_cue_mode);
+    float cross_x = 1.0 - smoothstep(
+        0.018,
+        0.036,
+        abs(v_model_position.x)
+    );
+    float cross_z = 1.0 - smoothstep(
+        0.018,
+        0.036,
+        abs(v_model_position.z)
+    );
+    float cross_mask = max(cross_x, cross_z)
+        * step(v_surface_cue, -0.5)
+        * step(u_cue_mode, -0.5);
+    float cue_mask = max(dot_mask, cross_mask) * u_cue_strength;
+    gl_FragColor = vec4(
+        mix(shaded_color, u_cue_color.rgb, cue_mask),
+        u_color.a
+    );
 }
 `;
 
 const DEG_TO_RAD = Math.PI / 180;
+const DEPTH_REVEAL_ANGLE = 42 * DEG_TO_RAD;
+const TOWARD_DIRECTIONS = new Set(['toward', 'towards', 'forward']);
+const AWAY_DIRECTIONS = new Set(['away', 'backward']);
+const DEPTH_DIRECTIONS = new Set([
+    ...TOWARD_DIRECTIONS,
+    ...AWAY_DIRECTIONS,
+]);
 
 
 function parseColor(value, fallback) {
@@ -413,98 +452,75 @@ function cubeMeshArrays() {
 }
 
 
-function coneMeshArrays(
-    segments = 12,
-    bottomRadius = 0.5,
-    topRadius = 0,
-) {
-    const positions = [];
-    const normals = [];
-    const indices = [];
-    const safeSegments = Math.max(3, Math.round(segments));
-    const slope = bottomRadius - topRadius;
-    const normalLength = Math.hypot(1, slope);
+const DIRECTION_ARROW_PROFILES = Object.freeze({
+    triangular: 3,
+    square: 4,
+    octagonal: 8,
+});
 
-    for (let index = 0; index <= safeSegments; index += 1) {
-        const angle = (index / safeSegments) * Math.PI * 2;
-        const cosine = Math.cos(angle);
-        const sine = Math.sin(angle);
-        positions.push(
-            cosine * bottomRadius, -0.5, sine * bottomRadius,
-            cosine * topRadius, 0.5, sine * topRadius,
-        );
-        const normal = [
-            cosine / normalLength,
-            slope / normalLength,
-            sine / normalLength,
-        ];
-        normals.push(...normal, ...normal);
-    }
-    for (let index = 0; index < safeSegments; index += 1) {
-        const lower = index * 2;
-        indices.push(
-            lower, lower + 1, lower + 2,
-            lower + 1, lower + 3, lower + 2,
-        );
-    }
 
-    const bottomCenter = positions.length / 3;
-    positions.push(0, -0.5, 0);
-    normals.push(0, -1, 0);
-    for (let index = 0; index <= safeSegments; index += 1) {
-        const angle = (index / safeSegments) * Math.PI * 2;
-        positions.push(
-            Math.cos(angle) * bottomRadius,
-            -0.5,
-            Math.sin(angle) * bottomRadius,
-        );
-        normals.push(0, -1, 0);
-    }
-    for (let index = 0; index < safeSegments; index += 1) {
-        indices.push(
-            bottomCenter,
-            bottomCenter + index + 2,
-            bottomCenter + index + 1,
-        );
-    }
-
-    if (topRadius > 0) {
-        const topCenter = positions.length / 3;
-        positions.push(0, 0.5, 0);
-        normals.push(0, 1, 0);
-        for (let index = 0; index <= safeSegments; index += 1) {
-            const angle = (index / safeSegments) * Math.PI * 2;
-            positions.push(
-                Math.cos(angle) * topRadius,
-                0.5,
-                Math.sin(angle) * topRadius,
-            );
-            normals.push(0, 1, 0);
-        }
-        for (let index = 0; index < safeSegments; index += 1) {
-            indices.push(
-                topCenter,
-                topCenter + index + 1,
-                topCenter + index + 2,
-            );
+function directionArrowStyle(item = {}) {
+    const profileValue = String(item?.profile || '').trim().toLowerCase();
+    const legacySolid = String(item?.solid || '').trim().toLowerCase();
+    let profile = profileValue;
+    if (
+        !Object.prototype.hasOwnProperty.call(
+            DIRECTION_ARROW_PROFILES,
+            profile,
+        )
+    ) {
+        if (legacySolid.includes('tetra')) {
+            profile = 'triangular';
+        } else if (legacySolid.includes('octa')) {
+            profile = 'octagonal';
+        } else {
+            profile = 'square';
         }
     }
-    return {positions, normals, indices};
+
+    const headValue = String(item?.head_style || '').trim().toLowerCase();
+    const legacyBand = String(item?.band || '').trim().toLowerCase();
+    let headStyle = headValue;
+    if (headStyle !== 'narrow' && headStyle !== 'wide') {
+        headStyle = legacyBand === 'split' ? 'wide' : 'narrow';
+    }
+
+    const shaftValue = String(
+        item?.shaft_style || '',
+    ).trim().toLowerCase();
+    const legacyBeacon = String(item?.beacon || '').trim().toLowerCase();
+    let shaftStyle = shaftValue;
+    if (shaftStyle !== 'short' && shaftStyle !== 'long') {
+        shaftStyle = legacyBeacon === 'dot' ? 'long' : 'short';
+    }
+    return {profile, headStyle, shaftStyle};
 }
 
 
-function arrowMeshArrays(segments = 8) {
+function directionArrowKey(style) {
+    return [
+        style.profile,
+        style.headStyle,
+        style.shaftStyle,
+    ].join(':');
+}
+
+
+function arrowMeshArrays(profile, headStyle, shaftStyle) {
     const positions = [];
     const normals = [];
+    const surfaceCues = [];
     const indices = [];
-    const safeSegments = Math.max(3, Math.round(segments));
-    const tailY = -0.54;
-    const shoulderY = 0.04;
+    const segments = DIRECTION_ARROW_PROFILES[profile]
+        || DIRECTION_ARROW_PROFILES.square;
+    const tailY = shaftStyle === 'short' ? -0.32 : -0.56;
+    const shoulderY = 0.01;
     const tipY = 0.56;
-    const shaftRadius = 0.14;
-    const headRadius = 0.36;
+    const shaftRadius = 0.13;
+    const headRadius = headStyle === 'narrow' ? 0.28 : 0.38;
+    const tipRadius = headStyle === 'narrow' ? 0.095 : 0.11;
 
-    const addFace = (points) => {
+    const addFace = (points, surfaceCue = 0) => {
         const firstEdge = points[1].map(
             (value, index) => value - points[0][index],
         );
@@ -527,22 +543,26 @@ function arrowMeshArrays(segments = 8) {
         points.forEach((point) => {
             positions.push(...point);
             normals.push(...normal);
+            surfaceCues.push(surfaceCue);
         });
         for (let index = 1; index < points.length - 1; index += 1) {
             indices.push(offset, offset + index, offset + index + 1);
         }
     };
 
-    for (let index = 0; index < safeSegments; index += 1) {
-        const firstAngle = (index / safeSegments) * Math.PI * 2;
+    const radialPoint = (radius, y, angle) => [
+        Math.cos(angle) * radius,
+        y,
+        Math.sin(angle) * radius,
+    ];
+    const tailCap = [];
+    const tipCap = [];
+
+    for (let index = 0; index < segments; index += 1) {
+        const firstAngle = (index / segments) * Math.PI * 2;
         const secondAngle = (
-            (index + 1) / safeSegments
+            (index + 1) / segments
         ) * Math.PI * 2;
-        const radialPoint = (radius, y, angle) => [
-            Math.cos(angle) * radius,
-            y,
-            Math.sin(angle) * radius,
-        ];
         const tailFirst = radialPoint(
             shaftRadius,
             tailY,
@@ -573,6 +593,16 @@ function arrowMeshArrays(segments = 8) {
             shoulderY,
             secondAngle,
         );
+        const tipFirst = radialPoint(
+            tipRadius,
+            tipY,
+            firstAngle,
+        );
+        const tipSecond = radialPoint(
+            tipRadius,
+            tipY,
+            secondAngle,
+        );
 
         addFace([
             tailFirst,
@@ -588,94 +618,21 @@ function arrowMeshArrays(segments = 8) {
         ]);
         addFace([
             headFirst,
-            [0, tipY, 0],
+            tipFirst,
+            tipSecond,
             headSecond,
         ]);
-        addFace([
-            [0, tailY, 0],
-            tailFirst,
-            tailSecond,
-        ]);
+        tailCap.push(tailFirst);
+        tipCap.push(tipFirst);
     }
-    return {positions, normals, indices};
-}
-
-
-function polyhedronMeshArrays(vertices, faces) {
-    const positions = [];
-    const normals = [];
-    const indices = [];
-    faces.forEach((face) => {
-        const points = face.map((index) => vertices[index]);
-        const firstEdge = points[1].map(
-            (value, index) => value - points[0][index],
-        );
-        const secondEdge = points[2].map(
-            (value, index) => value - points[0][index],
-        );
-        const rawNormal = [
-            (firstEdge[1] * secondEdge[2])
-                - (firstEdge[2] * secondEdge[1]),
-            (firstEdge[2] * secondEdge[0])
-                - (firstEdge[0] * secondEdge[2]),
-            (firstEdge[0] * secondEdge[1])
-                - (firstEdge[1] * secondEdge[0]),
-        ];
-        const normalLength = Math.max(0.0001, Math.hypot(...rawNormal));
-        const normal = rawNormal.map(
-            (component) => component / normalLength,
-        );
-        const offset = positions.length / 3;
-        points.forEach((point) => {
-            positions.push(...point);
-            normals.push(...normal);
-        });
-        indices.push(offset, offset + 1, offset + 2);
-    });
-    return {positions, normals, indices};
-}
-
-
-function tetrahedronMeshArrays() {
-    const scale = 0.36;
-    return polyhedronMeshArrays(
-        [
-            [1, 1, 1],
-            [-1, -1, 1],
-            [-1, 1, -1],
-            [1, -1, -1],
-        ].map((vertex) => vertex.map((value) => value * scale)),
-        [
-            [0, 1, 2],
-            [0, 3, 1],
-            [0, 2, 3],
-            [1, 3, 2],
-        ],
-    );
-}
-
-
-function octahedronMeshArrays() {
-    return polyhedronMeshArrays(
-        [
-            [0, 0.6, 0],
-            [0, -0.6, 0],
-            [0.6, 0, 0],
-            [-0.6, 0, 0],
-            [0, 0, 0.6],
-            [0, 0, -0.6],
-        ],
-        [
-            [0, 2, 4], [0, 4, 3],
-            [0, 3, 5], [0, 5, 2],
-            [1, 4, 2], [1, 3, 4],
-            [1, 5, 3], [1, 2, 5],
-        ],
-    );
+    addFace(tailCap, -1);
+    addFace(tipCap.reverse(), 1);
+    return {positions, normals, surfaceCues, indices};
 }
 
 
 function meshBufferInfo(gl, arrays) {
+    const vertexCount = arrays.positions.length / 3;
     return globalThis.twgl.createBufferInfoFromArrays(gl, {
         a_position: {
             numComponents: 3,
@@ -684,6 +641,10 @@ function meshBufferInfo(gl, arrays) {
         a_normal: {
             numComponents: 3,
             data: arrays.normals,
+        },
+        a_surface_cue: {
+            numComponents: 1,
+            data: arrays.surfaceCues || new Array(vertexCount).fill(0),
         },
         indices: arrays.indices,
     });
@@ -701,31 +662,13 @@ function directionOrientation(direction) {
     if (normalised === 'left') {
         return mat4RotationZ(Math.PI / 2);
     }
-    if (new Set(['toward', 'towards', 'forward']).has(normalised)) {
-        return mat4RotationX(Math.PI / 2);
+    if (TOWARD_DIRECTIONS.has(normalised)) {
+        return mat4RotationX((Math.PI / 2) - DEPTH_REVEAL_ANGLE);
     }
-    if (new Set(['away', 'backward']).has(normalised)) {
-        return mat4RotationX(-Math.PI / 2);
+    if (AWAY_DIRECTIONS.has(normalised)) {
+        return mat4RotationX((-Math.PI / 2) - DEPTH_REVEAL_ANGLE);
     }
     return mat4Identity();
-}
-
-
-function visibleFeature(value) {
-    return !new Set(['', '0', 'false', 'none', 'off', 'null']).has(
-        String(value ?? '').trim().toLowerCase(),
-    );
-}
-
-
-function bandCount(value) {
-    const normalised = String(value ?? '').trim().toLowerCase();
-    if (!visibleFeature(normalised)) {
-        return 0;
-    }
-    return new Set([
-        'double', 'twin', 'two', '2', 'split',
-    ]).has(normalised) ? 2 : 1;
 }
 
 
@@ -890,32 +833,31 @@ export class InstrumentVisuals {
         }
         if (!this.meshes) {
             try {
+                const directionArrows = {};
+                Object.keys(DIRECTION_ARROW_PROFILES).forEach((profile) => {
+                    ['narrow', 'wide'].forEach((headStyle) => {
+                        ['short', 'long'].forEach((shaftStyle) => {
+                            const style = {
+                                profile,
+                                headStyle,
+                                shaftStyle,
+                            };
+                            directionArrows[
+                                directionArrowKey(style)
+                            ] = meshBufferInfo(
+                                this.gl,
+                                arrowMeshArrays(
+                                    profile,
+                                    headStyle,
+                                    shaftStyle,
+                                ),
+                            );
+                        });
+                    });
+                });
                 this.meshes = {
                     cube: meshBufferInfo(this.gl, cubeMeshArrays()),
-                    tetrahedron: meshBufferInfo(
-                        this.gl,
-                        tetrahedronMeshArrays(),
-                    ),
-                    octahedron: meshBufferInfo(
-                        this.gl,
-                        octahedronMeshArrays(),
-                    ),
-                    arrowTetrahedron: meshBufferInfo(
-                        this.gl,
-                        arrowMeshArrays(3),
-                    ),
-                    arrowCube: meshBufferInfo(
-                        this.gl,
-                        arrowMeshArrays(4),
-                    ),
-                    arrowOctahedron: meshBufferInfo(
-                        this.gl,
-                        arrowMeshArrays(8),
-                    ),
-                    bandCollar: meshBufferInfo(
-                        this.gl,
-                        coneMeshArrays(16, 0.5, 0.5),
-                    ),
+                    directionArrows,
                 };
             } catch (_error) {
                 this.meshes = null;
@@ -1115,7 +1057,7 @@ export class InstrumentVisuals {
         );
     }
 
-    drawSolid(mesh, world, viewProjection, color) {
+    drawSolid(mesh, world, viewProjection, color, cue = {}) {
         const twgl = globalThis.twgl;
         const worldViewProjection = mat4Multiply(viewProjection, world);
         this.gl.useProgram(this.solidProgramInfo.program);
@@ -1128,20 +1070,17 @@ export class InstrumentVisuals {
             u_world: world,
             u_world_view_projection: worldViewProjection,
             u_color: color,
+            u_cue_color: cue.color || [0, 0, 0, 1],
+            u_cue_mode: finiteNumber(cue.mode, 0),
+            u_cue_strength: finiteNumber(cue.strength, 0),
             u_light_direction: [0.35, 0.72, 0.6],
         });
         twgl.drawBufferInfo(this.gl, mesh);
     }
 
-    directionArrowMesh(solid) {
-        const name = String(solid || '').toLowerCase();
-        if (name.includes('tetra')) {
-            return this.meshes.arrowTetrahedron;
-        }
-        if (name.includes('octa')) {
-            return this.meshes.arrowOctahedron;
-        }
-        return this.meshes.arrowCube;
+    directionArrowMesh(style) {
+        return this.meshes.directionArrows[directionArrowKey(style)]
+            || this.meshes.directionArrows['square:wide:long'];
     }
 
     drawDirection3D() {
@@ -1168,7 +1107,6 @@ export class InstrumentVisuals {
         );
         const colors = this.themeColors();
         const bodyColor = mixColor(colors.ink, colors.sheet, 0.16);
-        const bandColor = mixColor(colors.rule, colors.ink, 0.28);
         const targetIndex = Number(this.review?.target_index);
 
         items.forEach((item, index) => {
@@ -1195,9 +1133,19 @@ export class InstrumentVisuals {
                 && targetIndex === index
             );
             const color = isTarget ? colors.error : bodyColor;
+            const direction = String(
+                item?.direction || '',
+            ).trim().toLowerCase();
+            let cueMode = 0;
+            if (TOWARD_DIRECTIONS.has(direction)) {
+                cueMode = 1;
+            } else if (AWAY_DIRECTIONS.has(direction)) {
+                cueMode = -1;
+            }
+            const arrowStyle = directionArrowStyle(item);
             const base = mat4Compose(
                 mat4Translation(x, y, 0),
-                directionOrientation(item?.direction),
+                directionOrientation(direction),
                 mat4RotationY(roll),
                 mat4Scaling(
                     isTarget ? 1.09 : 1,
@@ -1206,45 +1154,16 @@ export class InstrumentVisuals {
                 ),
             );
             this.drawSolid(
-                this.directionArrowMesh(item?.solid),
+                this.directionArrowMesh(arrowStyle),
                 base,
                 viewProjection,
                 color,
+                {
+                    color: colors.sheet,
+                    mode: cueMode,
+                    strength: DEPTH_DIRECTIONS.has(direction) ? 1 : 0,
+                },
             );
-
-            const numberOfBands = bandCount(item?.band);
-            const bandPositions = numberOfBands === 2
-                ? [-0.29, -0.08]
-                : [-0.18];
-            bandPositions.slice(0, numberOfBands).forEach((bandY) => {
-                const band = mat4Compose(
-                    base,
-                    mat4Translation(0, bandY, 0),
-                    mat4Scaling(0.38, 0.075, 0.38),
-                );
-                this.drawSolid(
-                    this.meshes.bandCollar,
-                    band,
-                    viewProjection,
-                    isTarget ? colors.error : bandColor,
-                );
-            });
-
-            if (visibleFeature(item?.beacon)) {
-                const beacon = mat4Compose(
-                    base,
-                    mat4Translation(0.24, -0.02, 0),
-                    mat4Scaling(0.14, 0.14, 0.14),
-                );
-                this.gl.disable(this.gl.DEPTH_TEST);
-                this.drawSolid(
-                    this.meshes.cube,
-                    beacon,
-                    viewProjection,
-                    isTarget ? colors.error : colors.rule,
-                );
-                this.gl.enable(this.gl.DEPTH_TEST);
-            }
         });
     }
 

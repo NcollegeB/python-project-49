@@ -419,12 +419,10 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 "new Set(['direction_3d', 'polycube_3d'])",
                 'depth: true',
                 'SOLID_VERTEX_SHADER',
-                'function arrowMeshArrays(segments = 8)',
-                'this.meshes.arrowTetrahedron',
-                'this.meshes.arrowCube',
-                'this.meshes.arrowOctahedron',
-                'this.meshes.bandCollar',
-                'directionArrowMesh(solid)',
+                'function arrowMeshArrays(profile, headStyle, shaftStyle)',
+                'directionArrowStyle(item)',
+                'const directionArrows = {};',
+                'directionArrowMesh(style)',
                 'drawDirection3D()',
                 'drawPolycube3D()',
                 "'(prefers-reduced-motion: reduce)'",
@@ -436,6 +434,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
             'directionShaftMesh(solid)',
             self.instrument_javascript,
         )
+        self.assertNotIn('this.meshes.bandCollar', self.instrument_javascript)
 
     def test_direction_overlay_has_no_per_arrow_guide_artifacts(self):
         direction_geometry = self.instrument_javascript.split(
@@ -456,11 +455,52 @@ class FrontendProgressionContractTest(unittest.TestCase):
             direction_geometry,
         )
 
+    def test_spatial_arrows_are_one_mesh_with_direction_gated_depth_cues(
+            self,
+    ):
+        renderer = self.instrument_javascript.split(
+            'drawDirection3D() {',
+            1,
+        )[1].split(
+            'drawPolycube3D() {',
+            1,
+        )[0]
+        self.assertEqual(1, renderer.count('this.drawSolid('))
+        self.assertNotIn('this.meshes.cube', renderer)
+        self.assertNotIn('bandCollar', renderer)
+        self.assertNotIn('DEPTH_TEST', renderer)
+        for source in (
+                'const DEPTH_REVEAL_ANGLE = 42 * DEG_TO_RAD;',
+                (
+                    'return mat4RotationX('
+                    '(-Math.PI / 2) - DEPTH_REVEAL_ANGLE);'
+                ),
+                'attribute float a_surface_cue;',
+                'uniform float u_cue_mode;',
+                '* step(0.5, u_cue_mode);',
+                '* step(u_cue_mode, -0.5);',
+                'surfaceCues.push(surfaceCue);',
+                'const tipRadius =',
+                'addFace(tailCap, -1);',
+                'addFace(tipCap.reverse(), 1);',
+                (
+                    "headStyle = legacyBand === 'split' "
+                    "? 'wide' : 'narrow';"
+                ),
+                (
+                    "shaftStyle = legacyBeacon === 'dot' "
+                    "? 'long' : 'short';"
+                ),
+        ):
+            self.assertIn(source, self.instrument_javascript)
+
     def test_spatial_rounds_have_webgl_and_static_accessible_renderers(self):
         for source in (
                 "new Set(['direction_3d', 'polycube_3d'])",
                 'renderDirection3DFallback',
                 'renderPolycube3DFallback',
+                "|| `${item?.direction || 'unknown'}-pointing arrow`,",
+                "'Find the unique arrow and report its direction.'",
                 "'spatial-3d-fallback direction-3d-fallback arrow-row'",
                 "'spatial-3d-fallback polycube-fallback'",
                 "renderCubeProjection(cubes, 'FRONT', 0, 1)",
@@ -485,7 +525,16 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 "'direction-arrow--toward'",
                 "'direction-arrow--away'",
                 'token.append(createDirectionArrow());',
-                'token.append(band, createDirectionArrow(item?.direction));',
+                'direction3DIntrinsicStyle(item)',
+                'token.dataset.profile = style.profile;',
+                'token.dataset.headStyle = style.headStyle;',
+                'token.dataset.shaftStyle = style.shaftStyle;',
+                'token.append(createDirectionArrow(item?.direction));',
+                "legacySolid.includes('tetra')",
+                "legacySolid.includes('octa')",
+                "legacySolid.includes('cube')",
+                "value('band') === 'split' ? 'wide' : 'narrow'",
+                "value('beacon') === 'dot' ? 'long' : 'short'",
         ):
             self.assertIn(source, self.javascript)
         for source in (
@@ -493,13 +542,35 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 '.direction-arrow__head',
                 'clip-path: polygon(50% 0, 100% 100%, 0 100%);',
                 '.direction-arrow--depth',
-                '.direction-arrow__depth-stroke--forward',
-                '.direction-arrow__depth-stroke--backward',
-                '.direction-3d-token .direction-arrow',
-                '.direction-3d-token__beacon',
+                '.direction-arrow__depth-cue',
+                '.direction-arrow__cue-stroke--forward',
+                '.direction-arrow__cue-stroke--backward',
+                '.direction-3d-token[data-profile="triangular"]',
+                '.direction-3d-token[data-profile="square"]',
+                '.direction-3d-token[data-profile="octagonal"]',
+                '.direction-3d-token[data-head-style="narrow"]',
+                '.direction-3d-token[data-head-style="wide"]',
+                '.direction-3d-token[data-shaft-style="short"]',
+                '.direction-3d-token[data-shaft-style="long"]',
         ):
             self.assertIn(source, self.stylesheet)
         self.assertNotIn('function direction3DGlyph', self.javascript)
+        for removed_markup in (
+                "'direction-3d-token__band'",
+                "'direction-3d-token__beacon'",
+                'token.dataset.solid',
+                'token.dataset.band',
+                'token.dataset.beacon',
+        ):
+            self.assertNotIn(removed_markup, self.javascript)
+        for removed_style in (
+                '.direction-3d-token__band',
+                '.direction-3d-token__beacon',
+                '[data-solid=',
+                '[data-band=',
+                '[data-beacon=',
+        ):
+            self.assertNotIn(removed_style, self.stylesheet)
         direction_block = self.javascript.split(
             "if (\n        kind === 'direction'",
             1,

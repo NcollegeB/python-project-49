@@ -1209,44 +1209,47 @@ kbd {
 }
 
 .direction-arrow--depth {
-    width: 50%;
-    height: 50%;
-    border: max(2px, 0.15em) solid currentcolor;
-    border-radius: 50%;
-    transform: none;
+    width: 72%;
+    height: 72%;
+    transform: rotate(42deg) scaleY(0.76);
 }
 
-.direction-arrow__depth-mark {
+.direction-arrow--away {
+    transform: rotate(222deg) scaleY(0.76);
+}
+
+.direction-arrow__depth-cue {
     position: absolute;
-    top: 50%;
+    z-index: 2;
+    top: 11%;
     left: 50%;
-    width: 24%;
-    height: 24%;
+    width: 15%;
+    height: 15%;
     border-radius: 50%;
-    background: currentcolor;
+    background: var(--sheet);
     transform: translate(-50%, -50%);
 }
 
-.direction-arrow--away .direction-arrow__depth-mark {
-    display: none;
+.direction-arrow--away .direction-arrow__depth-cue {
+    background: transparent;
 }
 
-.direction-arrow__depth-stroke {
+.direction-arrow__cue-stroke {
     position: absolute;
-    top: 44%;
-    left: 18%;
-    width: 64%;
-    height: 12%;
-    min-height: 3px;
-    background: currentcolor;
+    top: 42%;
+    left: 2%;
+    width: 96%;
+    height: 18%;
+    min-height: 2px;
+    background: var(--sheet);
     transform-origin: center;
 }
 
-.direction-arrow__depth-stroke--forward {
+.direction-arrow__cue-stroke--forward {
     transform: rotate(45deg);
 }
 
-.direction-arrow__depth-stroke--backward {
+.direction-arrow__cue-stroke--backward {
     transform: rotate(-45deg);
 }
 
@@ -1309,70 +1312,48 @@ kbd {
     font-size: clamp(1.25rem, 3.5vw, 2.15rem);
 }
 
-.direction-3d-token[data-solid*="round"],
-.direction-3d-token[data-solid*="cylinder"],
-.direction-3d-token[data-solid*="tube"] {
-    border-radius: 50%;
+.direction-3d-token .direction-arrow {
+    z-index: 1;
+    width: 72%;
+    height: 72%;
 }
 
-.direction-3d-token[data-solid*="hex"] {
+.direction-3d-token .direction-arrow__shaft {
+    left: 41%;
+    width: 18%;
+}
+
+.direction-3d-token[data-profile="triangular"] .direction-arrow__head {
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.direction-3d-token[data-profile="square"] .direction-arrow__head {
+    clip-path: polygon(50% 0, 100% 48%, 78% 100%, 22% 100%, 0 48%);
+}
+
+.direction-3d-token[data-profile="octagonal"] .direction-arrow__head {
     clip-path: polygon(
-        25% 3%, 75% 3%, 98% 50%,
-        75% 97%, 25% 97%, 2% 50%
+        34% 0, 66% 0, 100% 46%, 78% 100%,
+        22% 100%, 0 46%
     );
 }
 
-.direction-3d-token[data-solid*="octa"] {
-    clip-path: polygon(50% 1%, 99% 50%, 50% 99%, 1% 50%);
+.direction-3d-token[data-head-style="narrow"] .direction-arrow__head {
+    left: 30%;
+    width: 40%;
 }
 
-.direction-3d-token[data-solid*="tri"],
-.direction-3d-token[data-solid*="tetra"] {
-    clip-path: polygon(50% 2%, 98% 96%, 2% 96%);
-    padding-top: 14%;
+.direction-3d-token[data-head-style="wide"] .direction-arrow__head {
+    left: 17%;
+    width: 66%;
 }
 
-.direction-3d-token__band {
-    position: absolute;
-    z-index: 2;
-    right: 16%;
-    bottom: 18%;
-    left: 16%;
-    height: 2px;
-    background: var(--rule-dark);
-    transform: rotate(var(--arrow-rotation, 0deg));
-    transform-origin: center;
+.direction-3d-token[data-shaft-style="short"] .direction-arrow__shaft {
+    bottom: 25%;
 }
 
-.direction-3d-token .direction-arrow {
-    z-index: 3;
-}
-
-.direction-3d-token[data-band="none"] .direction-3d-token__band,
-.direction-3d-token[data-band="off"] .direction-3d-token__band,
-.direction-3d-token[data-band="false"] .direction-3d-token__band {
-    display: none;
-}
-
-.direction-3d-token[data-band="double"] .direction-3d-token__band,
-.direction-3d-token[data-band="twin"] .direction-3d-token__band,
-.direction-3d-token[data-band="split"] .direction-3d-token__band {
-    height: 5px;
-    border-top: 1px solid var(--rule-dark);
-    border-bottom: 1px solid var(--rule-dark);
-    background: transparent;
-}
-
-.direction-3d-token__beacon {
-    position: absolute;
-    z-index: 4;
-    top: 7px;
-    left: 7px;
-    width: 8px;
-    height: 8px;
-    border: 1px solid var(--sheet);
-    border-radius: 50%;
-    background: var(--ink);
+.direction-3d-token[data-shaft-style="long"] .direction-arrow__shaft {
+    bottom: 4%;
 }
 
 .arrow-token[data-rotation="0"],

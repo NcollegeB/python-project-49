@@ -1524,6 +1524,10 @@ function createDirectionArrow(direction = '') {
     const arrow = document.createElement('span');
     arrow.className = 'direction-arrow';
     arrow.setAttribute('aria-hidden', 'true');
+    arrow.append(
+        createTextElement('span', 'direction-arrow__shaft', ''),
+        createTextElement('span', 'direction-arrow__head', ''),
+    );
 
     const depthDirection = String(direction).toLowerCase();
     const isToward = new Set(['toward', 'towards', 'forward']).has(
@@ -1537,38 +1541,33 @@ function createDirectionArrow(direction = '') {
                 ? 'direction-arrow--toward'
                 : 'direction-arrow--away',
         );
-        arrow.append(createTextElement(
+        const cue = createTextElement(
             'span',
-            'direction-arrow__depth-mark',
+            'direction-arrow__depth-cue',
             '',
-        ));
+        );
         if (isAway) {
-            arrow.append(
+            cue.append(
                 createTextElement(
                     'span',
                     (
-                        'direction-arrow__depth-stroke '
-                        + 'direction-arrow__depth-stroke--forward'
+                        'direction-arrow__cue-stroke '
+                        + 'direction-arrow__cue-stroke--forward'
                     ),
                     '',
                 ),
                 createTextElement(
                     'span',
                     (
-                        'direction-arrow__depth-stroke '
-                        + 'direction-arrow__depth-stroke--backward'
+                        'direction-arrow__cue-stroke '
+                        + 'direction-arrow__cue-stroke--backward'
                     ),
                     '',
                 ),
             );
         }
-        return arrow;
+        arrow.append(cue);
     }
-
-    arrow.append(
-        createTextElement('span', 'direction-arrow__shaft', ''),
-        createTextElement('span', 'direction-arrow__head', ''),
-    );
     return arrow;
 }
 
@@ -1584,10 +1583,36 @@ function direction3DRotation(direction) {
 }
 
 
-function hasVisualFeature(value) {
-    return !new Set(['', '0', 'false', 'none', 'off', 'null']).has(
-        String(value ?? '').trim().toLowerCase(),
-    );
+function direction3DIntrinsicStyle(item) {
+    const value = (key) => String(item?.[key] || '').toLowerCase();
+    const validProfiles = new Set(['triangular', 'square', 'octagonal']);
+    const validHeads = new Set(['narrow', 'wide']);
+    const validShafts = new Set(['short', 'long']);
+
+    const legacySolid = value('solid');
+    let profile = value('profile');
+    if (!validProfiles.has(profile)) {
+        if (legacySolid.includes('tetra')) {
+            profile = 'triangular';
+        } else if (legacySolid.includes('octa')) {
+            profile = 'octagonal';
+        } else if (legacySolid.includes('cube')) {
+            profile = 'square';
+        } else {
+            profile = 'square';
+        }
+    }
+
+    let headStyle = value('head_style');
+    if (!validHeads.has(headStyle)) {
+        headStyle = value('band') === 'split' ? 'wide' : 'narrow';
+    }
+
+    let shaftStyle = value('shaft_style');
+    if (!validShafts.has(shaftStyle)) {
+        shaftStyle = value('beacon') === 'dot' ? 'long' : 'short';
+    }
+    return {profile, headStyle, shaftStyle};
 }
 
 
@@ -1597,14 +1622,14 @@ function renderDirection3DFallback(round, visual) {
     const labels = items.map((item) => (
         String(
             item?.accessible_label
-            || `${item?.direction || 'unknown'}-pointing solid`,
+            || `${item?.direction || 'unknown'}-pointing arrow`,
         )
     ));
     const instruction = String(
         data.accessible_instruction
         || data.instruction
         || round.prompt
-        || 'Find the unique solid and report its direction.',
+        || 'Find the unique arrow and report its direction.',
     ).trim();
     if (labels.length) {
         visual.setAttribute(
@@ -1628,27 +1653,15 @@ function renderDirection3DFallback(round, visual) {
         token.className = 'arrow-token direction-3d-token';
         token.dataset.index = String(index);
         token.dataset.direction = String(item?.direction || '');
-        token.dataset.solid = String(item?.solid || 'prism').toLowerCase();
-        token.dataset.band = String(item?.band || 'none').toLowerCase();
+        const style = direction3DIntrinsicStyle(item);
+        token.dataset.profile = style.profile;
+        token.dataset.headStyle = style.headStyle;
+        token.dataset.shaftStyle = style.shaftStyle;
         const rotation = direction3DRotation(item?.direction);
         if (Number.isFinite(rotation)) {
             token.dataset.rotation = String(rotation);
         }
-        if (hasVisualFeature(item?.beacon)) {
-            token.dataset.beacon = 'true';
-            token.append(createTextElement(
-                'span',
-                'direction-3d-token__beacon',
-                '',
-            ));
-        }
-        const band = createTextElement(
-            'span',
-            'direction-3d-token__band',
-            '',
-        );
-        band.setAttribute('aria-hidden', 'true');
-        token.append(band, createDirectionArrow(item?.direction));
+        token.append(createDirectionArrow(item?.direction));
         field.append(token);
     });
     visual.append(field);

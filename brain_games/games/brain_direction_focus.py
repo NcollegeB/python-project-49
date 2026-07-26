@@ -1,58 +1,38 @@
-"""Find the one arrow pointing away from its distractors."""
+"""Compatibility entry point for the motion-based Direction Focus game."""
 
 import random
 
+from brain_games.games import brain_motion_direction as _motion
 
-NAME = 'Direction Focus'
-SLUG = 'direction-focus'
-CATEGORY = 'Attention'
-RULES = (
-    'Find the unique arrow or feature combination, then answer its '
-    'direction: up/down/left/right or u/d/l/r. The 3D rounds also '
-    'use toward/t and away/a.'
-)
-ANSWER_ALIASES = {
-    'u': 'up',
-    'd': 'down',
-    'l': 'left',
-    'r': 'right',
-    '^': 'up',
-    'v': 'down',
-    '<': 'left',
-    '>': 'right',
-    '↑': 'up',
-    '↓': 'down',
-    '←': 'left',
-    '→': 'right',
-    't': 'toward',
-    'a': 'away',
-    'in': 'toward',
-    'out': 'away',
-    'forward': 'toward',
-    'back': 'away',
-    '⊙': 'toward',
-    '⊗': 'away',
-}
-DIRECTIONS = {
-    'up': '↑',
-    'down': '↓',
-    'left': '←',
-    'right': '→',
-}
-ARROW_COUNT = 7
+
+NAME = _motion.NAME
+SLUG = _motion.SLUG
+CATEGORY = _motion.CATEGORY
+RULES = _motion.RULES
+ANSWER_ALIASES = _motion.ANSWER_ALIASES
+DIRECTIONS = _motion.DIRECTIONS
+
+
+def generate_round(rng, level):
+    """Delegate browser-style rounds to the motion-first generator."""
+    return _motion.generate_round(rng, level)
 
 
 def get_question_and_answer():
-    """Return a row containing exactly one differently directed arrow."""
-    direction_names = tuple(DIRECTIONS)
-    target_direction = random.choice(direction_names)
-    distractor_options = tuple(
-        name for name in direction_names if name != target_direction
+    """Return a text-only motion round for legacy terminal callers."""
+    generated = generate_round(random, 2)
+    item = generated['data']['items'][0]
+    start = item['trail']['start']
+    end = item['trail']['end']
+    question = (
+        'Tracked arrow faces {facing}. Its center moves from '
+        '({start_x:.2f}, {start_y:.2f}) to '
+        '({end_x:.2f}, {end_y:.2f}). Which way did it move?'
+    ).format(
+        facing=item['facing_direction'],
+        start_x=start[0],
+        start_y=start[1],
+        end_x=end[0],
+        end_y=end[1],
     )
-    distractor_direction = random.choice(distractor_options)
-    target_index = random.randrange(ARROW_COUNT)
-
-    arrows = [DIRECTIONS[distractor_direction]] * ARROW_COUNT
-    arrows[target_index] = DIRECTIONS[target_direction]
-    question = 'Find the odd arrow: {}'.format('  '.join(arrows))
-    return question, target_direction
+    return question, generated['expected_answer']

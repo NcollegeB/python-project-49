@@ -20,6 +20,8 @@ const WRONG_REVIEW_MS = {
     'direction-focus': 2200,
     'symbol-match': 2300,
     'word-scramble': 2300,
+    'memory-matrix': 2600,
+    'pinball-recall': 3200,
 };
 const STILL_CHECKING_DELAY = 1000;
 const TIMEOUT_ANSWER = '__brainhacker_timeout__';
@@ -30,7 +32,7 @@ const SUPPORTED_ARROW_ROTATIONS = new Set([
     180, 195, 200, 210, 220, 225, 230, 240, 250, 255,
     270, 285, 290, 300, 310, 315, 320, 330, 340, 345,
 ]);
-const THREE_D_RENDER_MODES = new Set(['direction_3d', 'polycube_3d']);
+const THREE_D_RENDER_MODES = new Set(['polycube_3d']);
 
 const iconBySlug = {
     even: '02',
@@ -43,7 +45,9 @@ const iconBySlug = {
     'direction-focus': '↗',
     'symbol-match': '◇◆',
     'word-scramble': 'A?',
-    culmination: '10×',
+    'memory-matrix': '▦',
+    'pinball-recall': '◉',
+    culmination: '12×',
 };
 
 const instructionBySlug = {
@@ -54,9 +58,11 @@ const instructionBySlug = {
     prime: 'Is this number prime?',
     'number-memory': 'Memorize this number.',
     'verbal-memory': 'Have you seen this word in this run?',
-    'direction-focus': 'Which way does the odd arrow point?',
+    'direction-focus': 'Which way is the tracked group moving?',
     'symbol-match': 'Do these symbols match?',
     'word-scramble': 'Unscramble the letters.',
+    'memory-matrix': 'Memorize the highlighted tiles.',
+    'pinball-recall': 'Memorize the mirrors, then trace the ball.',
 };
 
 const dom = {};
@@ -1044,7 +1050,7 @@ function setFeedback(message, tone = 'neutral') {
 }
 
 
-function setAnswerReviewFeedback(sourceName, grading, review) {
+function setAnswerReviewFeedback(sourceName, sourceSlug, grading, review) {
     if (!dom.feedbackRegion) {
         return;
     }
@@ -1056,9 +1062,14 @@ function setAnswerReviewFeedback(sourceName, grading, review) {
         'feedback-review__label',
         `${timedOut ? 'TIME' : 'MISS'} / ${sourceName}`,
     );
-    const answerLine = timedOut
+    let answerLine = timedOut
         ? `No answer recorded · Correct answer: ${expected}`
         : `Your answer: ${submitted} · Correct answer: ${expected}`;
+    if (sourceSlug === 'memory-matrix') {
+        answerLine = timedOut
+            ? 'No pattern recorded · Correct tiles are highlighted'
+            : 'Pattern did not match · Correct tiles are highlighted';
+    }
     const message = createTextElement(
         'strong',
         'feedback-review__answer',
@@ -1188,12 +1199,16 @@ function annotateScrambleReview(round, grading) {
 
 function annotateSpatialReview(round, review) {
     if (round.source_slug === 'direction-focus') {
-        const target = dom.roundVisual.querySelector(
-            `.arrow-token[data-index="${Number(review.target_index)}"]`,
+        const targetIds = new Set(
+            Array.isArray(review.target_item_ids)
+                ? review.target_item_ids.map(String)
+                : [],
         );
-        if (target) {
-            target.dataset.reviewState = 'answer';
-        }
+        dom.roundVisual.querySelectorAll('.motion-item').forEach((item) => {
+            if (targetIds.has(String(item.dataset.itemId || ''))) {
+                item.dataset.reviewState = 'answer';
+            }
+        });
     }
     if (round.source_slug === 'symbol-match') {
         const mismatchIndices = Array.isArray(review.mismatch_indices)
@@ -1239,6 +1254,73 @@ function annotateSpatialReview(round, review) {
 }
 
 
+function annotateRecallReview(round, review) {
+    if (round.source_slug === 'memory-matrix') {
+        const targets = new Set(
+            Array.isArray(review.target_indices)
+                ? review.target_indices.map(Number)
+                : [],
+        );
+        dom.roundVisual.dataset.recallPhase = 'review';
+        const gridSize = Math.max(
+            2,
+            Number(round.data?.grid_size || 3),
+        );
+        const targetLabels = Array.from(targets).map((index) => (
+            `row ${Math.floor(index / gridSize) + 1}, `
+            + `column ${(index % gridSize) + 1}`
+        ));
+        dom.roundVisual.setAttribute(
+            'aria-label',
+            `Memory Matrix review. Correct tiles: ${targetLabels.join('; ')}.`,
+        );
+        dom.roundVisual.querySelectorAll('.memory-matrix__tile').forEach(
+            (tile) => {
+                const index = Number(tile.dataset.index);
+                const selected = tile.dataset.selected === 'true';
+                if (targets.has(index)) {
+                    tile.dataset.reviewState = 'answer';
+                } else if (selected) {
+                    tile.dataset.reviewState = 'submitted';
+                }
+            },
+        );
+    }
+    if (round.source_slug === 'pinball-recall') {
+        dom.roundVisual.dataset.recallPhase = 'review';
+        dom.roundVisual.setAttribute(
+            'aria-label',
+            (
+                `Pinball Recall review. The ball entered at ${
+                    String(round.data?.entry_port || '').toUpperCase()
+                } and exited at ${String(review.exit || '').toUpperCase()}.`
+            ),
+        );
+        const pathCells = new Set(
+            (Array.isArray(review.path) ? review.path : []).map(
+                (cell) => `${Number(cell?.[0])}:${Number(cell?.[1])}`,
+            ),
+        );
+        dom.roundVisual.querySelectorAll('.pinball-cell').forEach((cell) => {
+            const key = `${Number(cell.dataset.row)}:${
+                Number(cell.dataset.column)
+            }`;
+            if (pathCells.has(key)) {
+                cell.dataset.path = 'true';
+            }
+        });
+        dom.roundVisual.querySelectorAll('.pinball-port').forEach((port) => {
+            if (
+                normalisedAnswer(port.dataset.port)
+                === normalisedAnswer(review.exit)
+            ) {
+                port.dataset.reviewState = 'answer';
+            }
+        });
+    }
+}
+
+
 function showWrongAnswerReview(round, grading, submittedControl) {
     const review = grading.review && typeof grading.review === 'object'
         ? grading.review
@@ -1251,8 +1333,10 @@ function showWrongAnswerReview(round, grading, submittedControl) {
     annotateProgressionReview(round, grading);
     annotateScrambleReview(round, grading);
     annotateSpatialReview(round, review);
+    annotateRecallReview(round, review);
     const sourceName = round.source_name || state.selected.name;
-    setAnswerReviewFeedback(sourceName, grading, review);
+    const sourceSlug = grading.source_slug || round.source_slug;
+    setAnswerReviewFeedback(sourceName, sourceSlug, grading, review);
 }
 
 
@@ -1825,6 +1909,442 @@ function renderPolycube3DFallback(round, visual) {
 }
 
 
+function matrixSelection(visual) {
+    return Array.from(
+        visual.querySelectorAll('.memory-matrix__tile[data-selected="true"]'),
+    ).map((tile) => Number(tile.dataset.index))
+        .filter(Number.isInteger)
+        .sort((first, second) => first - second);
+}
+
+
+function updateMatrixCounter(visual, requiredCount) {
+    const selectedCount = matrixSelection(visual).length;
+    const counter = visual.querySelector('.memory-matrix__counter');
+    if (counter) {
+        counter.textContent = `${selectedCount} / ${requiredCount}`;
+    }
+    if (visual.dataset.recallPhase !== 'preview') {
+        visual.setAttribute(
+            'aria-label',
+            (
+                `Memory Matrix. ${selectedCount} of `
+                + `${requiredCount} tiles selected.`
+            ),
+        );
+    }
+}
+
+
+function renderMemoryMatrix(round, visual) {
+    const data = round.data || {};
+    const gridSize = Math.max(2, Math.min(9, Number(data.grid_size || 3)));
+    const requiredCount = Math.max(
+        1,
+        Math.min(
+            gridSize * gridSize,
+            Number(data.required_count || 1),
+        ),
+    );
+    const highlighted = new Set(
+        Array.isArray(data.highlighted_indices)
+            ? data.highlighted_indices.map(Number)
+            : [],
+    );
+    visual.classList.add('round-visual--memory-matrix');
+    visual.dataset.recallPhase = 'preview';
+    visual.setAttribute('role', 'group');
+    const highlightedLabels = Array.from(highlighted).map((index) => (
+        `row ${Math.floor(index / gridSize) + 1}, `
+        + `column ${(index % gridSize) + 1}`
+    ));
+    visual.setAttribute(
+        'aria-label',
+        `Memory Matrix preview. Highlighted: ${highlightedLabels.join('; ')}.`,
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'memory-matrix';
+    const counter = createTextElement(
+        'span',
+        'memory-matrix__counter',
+        `0 / ${requiredCount}`,
+    );
+    counter.setAttribute('aria-live', 'polite');
+    const grid = document.createElement('div');
+    grid.className = 'memory-matrix__grid';
+    grid.dataset.size = String(gridSize);
+    grid.setAttribute(
+        'aria-label',
+        `${gridSize} by ${gridSize} memory grid`,
+    );
+
+    for (let index = 0; index < gridSize * gridSize; index += 1) {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'memory-matrix__tile';
+        tile.dataset.index = String(index);
+        tile.dataset.recallControl = 'true';
+        tile.disabled = true;
+        tile.setAttribute('aria-pressed', 'false');
+        tile.setAttribute(
+            'aria-label',
+            `Row ${Math.floor(index / gridSize) + 1}, column ${
+                (index % gridSize) + 1
+            }`,
+        );
+        if (highlighted.has(index)) {
+            tile.dataset.previewHighlighted = 'true';
+        }
+        tile.addEventListener('click', () => {
+            if (
+                visual.dataset.recallPhase !== 'answer'
+                || state.busy
+            ) {
+                return;
+            }
+            if (tile.dataset.selected === 'true') {
+                delete tile.dataset.selected;
+                tile.setAttribute('aria-pressed', 'false');
+            } else {
+                tile.dataset.selected = 'true';
+                tile.setAttribute('aria-pressed', 'true');
+            }
+            updateMatrixCounter(visual, requiredCount);
+            const selected = matrixSelection(visual);
+            if (selected.length === requiredCount) {
+                submitAnswer(selected.join(','), tile);
+            }
+        });
+        grid.append(tile);
+    }
+    shell.append(counter, grid);
+    visual.replaceChildren(shell);
+    updateMatrixCounter(visual, requiredCount);
+}
+
+
+function clampedUnit(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return 0.5;
+    }
+    return Math.max(0, Math.min(1, numeric));
+}
+
+
+function motionPoint(rawPoint) {
+    const point = Array.isArray(rawPoint) ? rawPoint : [];
+    return [
+        clampedUnit(point[0]),
+        clampedUnit(point[1]),
+    ];
+}
+
+
+function renderMotionDirection(round, visual) {
+    const data = round.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const hasDistractors = items.some(
+        (item) => item?.visual_role === 'distractor',
+    );
+    visual.classList.add('round-visual--motion-direction');
+    visual.setAttribute('role', 'group');
+    visual.setAttribute(
+        'aria-label',
+        [
+            data.accessible_instruction
+            || data.instruction
+            || round.prompt
+            || 'Track the movement direction.',
+            ...items.filter((item) => (
+                !hasDistractors || item?.visual_role === 'target'
+            )).map((item) => item?.accessible_label).filter(Boolean),
+        ].join(' '),
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'motion-direction';
+    if (hasDistractors) {
+        shell.append(createTextElement(
+            'span',
+            'motion-direction__legend',
+            'TRACK THE MARKED GROUP',
+        ));
+    }
+    const field = document.createElement('div');
+    field.className = 'motion-field';
+    field.dataset.hasDistractors = hasDistractors ? 'true' : 'false';
+    field.setAttribute('aria-hidden', 'true');
+    const stage = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'svg',
+    );
+    stage.classList.add('motion-stage');
+    stage.setAttribute('viewBox', '0 0 100 50');
+    stage.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    const trails = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'g',
+    );
+    trails.classList.add('motion-trails');
+    const reducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+    ).matches;
+
+    items.forEach((item, index) => {
+        const start = motionPoint(item?.trail?.start);
+        const end = motionPoint(item?.trail?.end);
+        const startPoint = [start[0] * 100, start[1] * 50];
+        const endPoint = [end[0] * 100, end[1] * 50];
+        const role = item?.visual_role === 'target'
+            ? 'target'
+            : 'distractor';
+        const line = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'line',
+        );
+        line.setAttribute('x1', String(startPoint[0]));
+        line.setAttribute('y1', String(startPoint[1]));
+        line.setAttribute('x2', String(endPoint[0]));
+        line.setAttribute('y2', String(endPoint[1]));
+        line.dataset.role = role;
+        trails.append(line);
+        const endpoint = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'circle',
+        );
+        endpoint.setAttribute('cx', String(endPoint[0]));
+        endpoint.setAttribute('cy', String(endPoint[1]));
+        endpoint.setAttribute('r', hasDistractors && role === 'target'
+            ? '0.8'
+            : '0.48');
+        endpoint.dataset.role = role;
+        trails.append(endpoint);
+
+        const movingItem = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'g',
+        );
+        movingItem.classList.add('motion-item');
+        movingItem.dataset.itemId = String(
+            item?.item_id || `motion-${index + 1}`,
+        );
+        movingItem.dataset.role = role;
+        const restingPoint = reducedMotion ? endPoint : startPoint;
+        movingItem.setAttribute(
+            'transform',
+            `translate(${restingPoint[0]} ${restingPoint[1]})`,
+        );
+        const duration = Math.max(
+            550,
+            Math.min(2600, Number(item?.animation?.duration_ms || 1400)),
+        );
+        const delay = Math.max(
+            0,
+            Math.min(500, Number(item?.animation?.delay_ms || 0)),
+        );
+        if (!reducedMotion) {
+            const animation = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'animateTransform',
+            );
+            animation.setAttribute('attributeName', 'transform');
+            animation.setAttribute('type', 'translate');
+            animation.setAttribute(
+                'values',
+                (
+                    `${startPoint.join(' ')};`
+                    + `${startPoint.join(' ')};`
+                    + `${endPoint.join(' ')};`
+                    + `${endPoint.join(' ')}`
+                ),
+            );
+            animation.setAttribute('keyTimes', '0;0.1;0.82;1');
+            animation.setAttribute('dur', `${duration}ms`);
+            animation.setAttribute('begin', `${delay}ms`);
+            animation.setAttribute('repeatCount', 'indefinite');
+            movingItem.append(animation);
+        }
+
+        if (hasDistractors && role === 'target') {
+            const ring = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'circle',
+            );
+            ring.classList.add('motion-target-ring');
+            ring.setAttribute('r', '3.2');
+            movingItem.append(ring);
+            const marker = document.createElementNS(
+                'http://www.w3.org/2000/svg',
+                'circle',
+            );
+            marker.classList.add('motion-target-marker');
+            marker.setAttribute('cy', '-4.4');
+            marker.setAttribute('r', '0.55');
+            movingItem.append(marker);
+        }
+        const arrow = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'polygon',
+        );
+        arrow.classList.add('motion-arrow');
+        arrow.setAttribute(
+            'points',
+            '0,-2.7 2.5,-0.35 0.9,-0.35 0.9,2.7 '
+            + '-0.9,2.7 -0.9,-0.35 -2.5,-0.35',
+        );
+        const rotation = Number(item?.rotation_deg);
+        arrow.setAttribute(
+            'transform',
+            `rotate(${Number.isFinite(rotation) ? rotation : 0})`,
+        );
+        movingItem.append(arrow);
+        stage.append(movingItem);
+    });
+    stage.prepend(trails);
+    field.append(stage);
+    shell.append(field);
+    visual.replaceChildren(shell);
+}
+
+
+function pinballPortData(rawPort, gridSize) {
+    const label = String(rawPort || '').trim().toUpperCase();
+    const match = label.match(/^([NESW])(\d+)$/);
+    if (!match) {
+        return null;
+    }
+    const index = Number(match[2]);
+    if (!Number.isInteger(index) || index < 1 || index > gridSize) {
+        return null;
+    }
+    return {label, side: match[1], index: index - 1};
+}
+
+
+function renderPinballRecall(round, visual) {
+    const data = round.data || {};
+    const gridSize = Math.max(3, Math.min(8, Number(data.grid_size || 4)));
+    const bumpers = Array.isArray(data.bumpers) ? data.bumpers : [];
+    const bumperMap = new Map();
+    bumpers.forEach((bumper) => {
+        const row = Number(bumper?.cell?.[0]);
+        const column = Number(bumper?.cell?.[1]);
+        const orientation = bumper?.orientation === '\\' ? '\\' : '/';
+        if (
+            Number.isInteger(row)
+            && Number.isInteger(column)
+            && row >= 0
+            && row < gridSize
+            && column >= 0
+            && column < gridSize
+        ) {
+            bumperMap.set(`${row}:${column}`, orientation);
+        }
+    });
+    const entryPort = String(data.entry_port || '').toUpperCase();
+    visual.classList.add('round-visual--pinball-recall');
+    visual.dataset.recallPhase = 'preview';
+    visual.setAttribute('role', 'group');
+    visual.setAttribute(
+        'aria-label',
+        [
+            data.accessible_instruction || 'Memorize the mirror board.',
+            ...bumpers.map((bumper) => bumper?.accessible_label)
+                .filter(Boolean),
+        ].join(' '),
+    );
+
+    const shell = document.createElement('div');
+    shell.className = 'pinball-recall';
+    shell.dataset.size = String(gridSize);
+    const note = createTextElement(
+        'span',
+        'pinball-recall__note',
+        `${bumperMap.size} mirrors · entry appears next`,
+    );
+    const frame = document.createElement('div');
+    frame.className = 'pinball-board-frame';
+    const rails = new Map();
+    ['N', 'E', 'S', 'W'].forEach((side) => {
+        const rail = document.createElement('div');
+        rail.className = 'pinball-rail';
+        rail.dataset.side = side;
+        rails.set(side, rail);
+        frame.append(rail);
+    });
+    const board = document.createElement('div');
+    board.className = 'pinball-board';
+    for (let row = 0; row < gridSize; row += 1) {
+        for (let column = 0; column < gridSize; column += 1) {
+            const cell = document.createElement('span');
+            cell.className = 'pinball-cell';
+            cell.dataset.row = String(row);
+            cell.dataset.column = String(column);
+            const bumper = bumperMap.get(`${row}:${column}`);
+            if (bumper) {
+                cell.dataset.bumper = 'true';
+                cell.append(createTextElement(
+                    'span',
+                    'pinball-bumper',
+                    bumper,
+                ));
+            }
+            board.append(cell);
+        }
+    }
+    frame.append(board);
+
+    const ports = Array.isArray(data.perimeter_ports)
+        ? data.perimeter_ports
+        : [];
+    ports.forEach((rawPort) => {
+        const portData = pinballPortData(rawPort, gridSize);
+        if (!portData) {
+            return;
+        }
+        const button = createTextElement(
+            'button',
+            'pinball-port',
+            portData.label,
+        );
+        button.type = 'button';
+        button.disabled = true;
+        button.dataset.recallControl = 'true';
+        button.dataset.port = portData.label;
+        button.dataset.side = portData.side;
+        button.dataset.portIndex = String(portData.index);
+        if (portData.label === entryPort) {
+            button.dataset.entry = 'true';
+            button.dataset.nonAnswer = 'true';
+            button.setAttribute(
+                'aria-label',
+                `${portData.label}, ball entry port`,
+            );
+        } else {
+            button.setAttribute(
+                'aria-label',
+                `Choose exit port ${portData.label}`,
+            );
+        }
+        button.addEventListener('click', () => {
+            if (
+                visual.dataset.recallPhase !== 'answer'
+                || state.busy
+                || button.dataset.nonAnswer === 'true'
+            ) {
+                return;
+            }
+            submitAnswer(portData.label, button);
+        });
+        rails.get(portData.side)?.append(button);
+    });
+    shell.append(note, frame);
+    visual.replaceChildren(shell);
+}
+
+
 function renderGenericVisual(round) {
     const visual = dom.roundVisual;
     const data = round.data || {};
@@ -1833,6 +2353,20 @@ function renderGenericVisual(round) {
     visual.className = `round-visual round-visual--${kind}`;
     visual.setAttribute('role', 'img');
     visual.setAttribute('aria-label', round.prompt || 'Current challenge');
+
+    const namedRenderMode = String(data.render_mode || '').toLowerCase();
+    if (namedRenderMode === 'memory_matrix') {
+        renderMemoryMatrix(round, visual);
+        return;
+    }
+    if (namedRenderMode === 'motion_direction_2d') {
+        renderMotionDirection(round, visual);
+        return;
+    }
+    if (namedRenderMode === 'pinball_recall') {
+        renderPinballRecall(round, visual);
+        return;
+    }
 
     const renderMode = spatialRenderMode(data);
     if (renderMode) {
@@ -2075,6 +2609,41 @@ function revealMemoryAnswer(round) {
         return;
     }
     clearPreviewTimer();
+    const recallMode = String(
+        round.data?.render_mode || '',
+    ).toLowerCase();
+    if (
+        recallMode === 'memory_matrix'
+        || recallMode === 'pinball_recall'
+    ) {
+        const hiddenPrompt = round.hidden_prompt || 'What did you see?';
+        dom.roundVisual.dataset.recallPhase = 'answer';
+        dom.roundVisual.classList.remove('is-hidden');
+        dom.roundVisual.removeAttribute('aria-hidden');
+        dom.roundVisual.setAttribute('aria-label', hiddenPrompt);
+        dom.memoryCurtain.hidden = true;
+        dom.roundPrompt.textContent = hiddenPrompt;
+        dom.answerForm.hidden = true;
+        dom.choiceControls.hidden = true;
+        dom.answerRow.hidden = true;
+        const note = dom.roundVisual.querySelector(
+            '.pinball-recall__note',
+        );
+        if (note) {
+            note.textContent = (
+                `Entry ${String(round.data?.entry_port || '').toUpperCase()}`
+                + ' · choose the exit'
+            );
+        }
+        dom.roundVisual.querySelectorAll(
+            '[data-recall-control]',
+        ).forEach((control) => {
+            control.disabled = control.dataset.nonAnswer === 'true';
+        });
+        currentEnabledAnswerControl()?.focus({preventScroll: true});
+        scheduleCountdownStart(round);
+        return;
+    }
     dom.roundVisual.classList.add('is-hidden');
     dom.roundVisual.setAttribute('aria-hidden', 'true');
     dom.roundVisual.removeAttribute('aria-label');
@@ -2300,6 +2869,12 @@ function setControlsDisabled(disabled) {
     dom.choiceControls.querySelectorAll('button').forEach((button) => {
         button.disabled = disabled;
     });
+    dom.roundVisual.querySelectorAll('[data-recall-control]').forEach(
+        (control) => {
+            control.disabled = disabled
+                || control.dataset.nonAnswer === 'true';
+        },
+    );
 }
 
 
@@ -2310,8 +2885,16 @@ function currentEnabledAnswerControl() {
         || state.busy
         || dom.gameView.hidden
         || dom.activeState.hidden
-        || dom.answerForm.hidden
     ) {
+        return null;
+    }
+    const recallControl = dom.roundVisual.querySelector(
+        '[data-recall-control]:not(:disabled)',
+    );
+    if (recallControl) {
+        return recallControl;
+    }
+    if (dom.answerForm.hidden) {
         return null;
     }
     const choice = dom.choiceControls.querySelector(

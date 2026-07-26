@@ -1,5 +1,5 @@
-const SPATIAL_GAMES = new Set(['direction-focus', 'symbol-match']);
-const THREE_D_MODES = new Set(['direction_3d', 'polycube_3d']);
+const SPATIAL_GAMES = new Set(['symbol-match']);
+const THREE_D_MODES = new Set(['polycube_3d']);
 
 const LINE_VERTEX_SHADER = `
 attribute vec2 a_position;

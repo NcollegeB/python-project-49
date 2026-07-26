@@ -409,14 +409,14 @@ class FrontendProgressionContractTest(unittest.TestCase):
             self.javascript,
         )
         for source in (
-                "new Set(['direction-focus', 'symbol-match'])",
+                "new Set(['symbol-match'])",
                 "this.canvas.getContext('webgl'",
                 'twgl.createProgramInfo',
                 'twgl.createBufferInfoFromArrays',
                 "addEventListener('webglcontextlost'",
                 'this.canvas.setAttribute(\'aria-hidden\', \'true\')',
                 'Math.min(2, window.devicePixelRatio || 1)',
-                "new Set(['direction_3d', 'polycube_3d'])",
+                "new Set(['polycube_3d'])",
                 'depth: true',
                 'SOLID_VERTEX_SHADER',
                 'function arrowMeshArrays(profile, headStyle, shaftStyle)',
@@ -496,12 +496,14 @@ class FrontendProgressionContractTest(unittest.TestCase):
 
     def test_spatial_rounds_have_webgl_and_static_accessible_renderers(self):
         for source in (
-                "new Set(['direction_3d', 'polycube_3d'])",
-                'renderDirection3DFallback',
+                "new Set(['polycube_3d'])",
                 'renderPolycube3DFallback',
-                "|| `${item?.direction || 'unknown'}-pointing arrow`,",
-                "'Find the unique arrow and report its direction.'",
-                "'spatial-3d-fallback direction-3d-fallback arrow-row'",
+                'renderMotionDirection',
+                "namedRenderMode === 'motion_direction_2d'",
+                'renderMemoryMatrix',
+                "namedRenderMode === 'memory_matrix'",
+                'renderPinballRecall',
+                "namedRenderMode === 'pinball_recall'",
                 "'spatial-3d-fallback polycube-fallback'",
                 "renderCubeProjection(cubes, 'FRONT', 0, 1)",
                 "renderCubeProjection(cubes, 'SIDE', 2, 1)",
@@ -511,7 +513,9 @@ class FrontendProgressionContractTest(unittest.TestCase):
             self.assertIn(source, self.javascript)
         for source in (
                 '.round-visual[data-instrument="twgl-3d"]',
-                '.direction-3d-token',
+                '.motion-arrow',
+                '.memory-matrix__grid',
+                '.pinball-board',
                 '.polycube-projection',
                 '.polycube-projection__cell[data-review-state="mismatch"]',
         ):
@@ -519,66 +523,33 @@ class FrontendProgressionContractTest(unittest.TestCase):
 
     def test_direction_arrows_use_crisp_css_geometry(self):
         for source in (
-                'function createDirectionArrow(direction = \'\')',
-                "'direction-arrow__shaft'",
-                "'direction-arrow__head'",
-                "'direction-arrow--toward'",
-                "'direction-arrow--away'",
-                'token.append(createDirectionArrow());',
-                'direction3DIntrinsicStyle(item)',
-                'token.dataset.profile = style.profile;',
-                'token.dataset.headStyle = style.headStyle;',
-                'token.dataset.shaftStyle = style.shaftStyle;',
-                'token.append(createDirectionArrow(item?.direction));',
-                "legacySolid.includes('tetra')",
-                "legacySolid.includes('octa')",
-                "legacySolid.includes('cube')",
-                "value('band') === 'split' ? 'wide' : 'narrow'",
-                "value('beacon') === 'dot' ? 'long' : 'short'",
+                'function renderMotionDirection(round, visual)',
+                "arrow.classList.add('motion-arrow');",
+                "'animateTransform'",
+                "animation.setAttribute(\n                'values'",
+                "arrow.setAttribute(\n            'points'",
+                "arrow.setAttribute(\n            'transform'",
+                "item?.visual_role === 'distractor'",
+                'field.dataset.hasDistractors',
         ):
             self.assertIn(source, self.javascript)
         for source in (
-                '.direction-arrow__shaft',
-                '.direction-arrow__head',
-                'clip-path: polygon(50% 0, 100% 100%, 0 100%);',
-                '.direction-arrow--depth',
-                '.direction-arrow__depth-cue',
-                '.direction-arrow__cue-stroke--forward',
-                '.direction-arrow__cue-stroke--backward',
-                '.direction-3d-token[data-profile="triangular"]',
-                '.direction-3d-token[data-profile="square"]',
-                '.direction-3d-token[data-profile="octagonal"]',
-                '.direction-3d-token[data-head-style="narrow"]',
-                '.direction-3d-token[data-head-style="wide"]',
-                '.direction-3d-token[data-shaft-style="short"]',
-                '.direction-3d-token[data-shaft-style="long"]',
+                '.motion-arrow',
+                'fill: currentcolor;',
+                '.motion-target-ring',
+                '.motion-item[data-role="target"]',
+                '.motion-trails circle',
         ):
             self.assertIn(source, self.stylesheet)
-        self.assertNotIn('function direction3DGlyph', self.javascript)
-        for removed_markup in (
-                "'direction-3d-token__band'",
-                "'direction-3d-token__beacon'",
-                'token.dataset.solid',
-                'token.dataset.band',
-                'token.dataset.beacon',
-        ):
-            self.assertNotIn(removed_markup, self.javascript)
-        for removed_style in (
-                '.direction-3d-token__band',
-                '.direction-3d-token__beacon',
-                '[data-solid=',
-                '[data-band=',
-                '[data-beacon=',
-        ):
-            self.assertNotIn(removed_style, self.stylesheet)
-        direction_block = self.javascript.split(
-            "if (\n        kind === 'direction'",
-            1,
-        )[1].split(
-            'if (\n        Array.isArray(data.symbols)',
-            1,
-        )[0]
-        self.assertNotIn("'arrow-token__glyph'", direction_block)
+        self.assertNotIn('style.setProperty', self.javascript)
+        self.assertIn(
+            "const THREE_D_RENDER_MODES = new Set(['polycube_3d']);",
+            self.javascript,
+        )
+        self.assertIn(
+            "const SPATIAL_GAMES = new Set(['symbol-match']);",
+            self.instrument_javascript,
+        )
 
     def test_vercel_assets_match_local_assets(self):
         for name in (

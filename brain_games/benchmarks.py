@@ -98,6 +98,16 @@ _SPECS = (
         (0.90, 0.80, 0.68, 0.55, 0.42),
     ),
     _BenchmarkSpec(
+        'memory-matrix',
+        'Memory Matrix',
+        (0.92, 0.82, 0.68, 0.52, 0.38),
+    ),
+    _BenchmarkSpec(
+        'pinball-recall',
+        'Pinball Recall',
+        (0.90, 0.78, 0.64, 0.50, 0.36),
+    ),
+    _BenchmarkSpec(
         'culmination',
         'Culmination Test',
         (

@@ -4,7 +4,7 @@
 
 BrainHacker vendors a minified build of
 [TWGL.js](https://github.com/greggman/twgl.js) for the optional WebGL
-instrument layer used by Direction Focus and Symbol Match.
+instrument layer used by Symbol Match.
 
 - License: MIT
 - Vendored file: `brain_games/static/vendor/twgl-7.0.0.min.js`

@@ -62,15 +62,15 @@ class CulminationTest(unittest.TestCase):
         PreviewAliasRound.reset()
         brain_culmination.start_session()
 
-    def test_catalog_matches_the_ten_standalone_menu_games(self):
+    def test_catalog_contains_twelve_sources_and_matches_menu(self):
         menu_games = tuple(game for _number, game in cli.GAMES[:-1])
 
         self.assertEqual('Culmination Test', brain_culmination.NAME)
         self.assertEqual('culmination', brain_culmination.SLUG)
         self.assertEqual('Mixed', brain_culmination.CATEGORY)
         self.assertTrue(brain_culmination.RULES)
-        self.assertEqual(10, len(CORE_GAMES))
-        self.assertEqual(10, len({game.SLUG for game in CORE_GAMES}))
+        self.assertEqual(12, len(CORE_GAMES))
+        self.assertEqual(12, len({game.SLUG for game in CORE_GAMES}))
         self.assertEqual(CORE_GAMES, brain_culmination.SOURCE_GAMES)
         self.assertEqual(CORE_GAMES, menu_games)
         self.assertIs(brain_culmination, cli.GAMES[-1][1])
@@ -85,14 +85,27 @@ class CulminationTest(unittest.TestCase):
                 brain_culmination.get_question_and_answer()
                 active_games.append(brain_culmination.get_active_game())
 
-        self.assertEqual(list(CORE_GAMES), active_games[:10])
-        self.assertEqual(CORE_GAMES[0], active_games[10])
+        self.assertEqual(
+            list(CORE_GAMES),
+            active_games[:len(CORE_GAMES)],
+        )
+        self.assertEqual(
+            CORE_GAMES[0],
+            active_games[len(CORE_GAMES)],
+        )
 
     def test_new_bag_never_repeats_the_previous_round(self):
         shuffle_calls = 0
 
         def force_boundary_repeat(games):
             nonlocal shuffle_calls
+            if not games or not all(
+                    hasattr(game, 'SLUG')
+                    for game in games
+            ):
+                randomizer = brain_culmination.random.Random(4)
+                randomizer.shuffle(games)
+                return
             shuffle_calls += 1
             if shuffle_calls == 2:
                 previous_game = brain_culmination.get_active_game()

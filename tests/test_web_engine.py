@@ -181,7 +181,7 @@ class CatalogTest(unittest.TestCase):
     def test_catalog_includes_all_core_games_and_culmination(self):
         catalog = game_catalog()
 
-        self.assertEqual(11, len(GAME_CATALOG))
+        self.assertEqual(len(CORE_GAMES) + 1, len(GAME_CATALOG))
         self.assertEqual(
             [game.SLUG for game in CORE_GAMES] + ['culmination'],
             [game['slug'] for game in catalog],
@@ -229,7 +229,7 @@ class CatalogTest(unittest.TestCase):
 
         second = game_catalog()
 
-        self.assertEqual(11, len(second))
+        self.assertEqual(len(CORE_GAMES) + 1, len(second))
         self.assertNotEqual('Changed', second[0]['name'])
 
 
@@ -440,27 +440,40 @@ class RunStoreTest(unittest.TestCase):
         self.assertEqual(2, seen_review['prior_lag'])
         self.assertIn('2 prompts ago', seen_review['explanation'])
 
-    def test_direction_review_identifies_private_target_after_shuffle(self):
+    def test_direction_review_identifies_private_tracked_group(self):
         run = self.store.create('direction-focus', 'Ada')
         state = self.store._runs[run['run_id']]
         state.level = EXTENDED_MAX_LEVEL
         state.round = self.store._make_round(state)
         public = self.store._public_run(state)
         private_review = state.round['review']
-        target_index = private_review['target_index']
-        target_item = public['round']['data']['items'][target_index]
+        target_items = [
+            item
+            for item in public['round']['data']['items']
+            if item['visual_role'] == 'target'
+        ]
 
-        self.assertEqual(
-            state.round['expected_answer'],
-            target_item['direction'],
-        )
-        self.assertEqual('direction_3d', public['round']['data'][
+        self.assertTrue(target_items)
+        self.assertTrue(all(
+            item['motion_direction'] == state.round['expected_answer']
+            for item in target_items
+        ))
+        self.assertEqual('motion_direction_2d', public['round']['data'][
             'render_mode'
         ])
+        self.assertEqual(
+            {item['item_id'] for item in target_items},
+            set(private_review['target_item_ids']),
+        )
         assert_no_forbidden_keys(
             self,
             public['round'],
-            {'review', 'target_index', '_review_target'},
+            {
+                'review',
+                'target_item_ids',
+                'target_group_id',
+                'expected_answer',
+            },
         )
         wrong_answer = next(
             choice
@@ -473,9 +486,10 @@ class RunStoreTest(unittest.TestCase):
             wrong_answer,
         )
 
-        self.assertEqual(target_index, result['result']['review'][
-            'target_index'
-        ])
+        self.assertEqual(
+            'tracked',
+            result['result']['review']['target_group_id'],
+        )
 
     def test_symbol_review_identifies_private_transformed_mismatch(self):
         run = self.store.create('symbol-match', 'Ada')
@@ -517,9 +531,7 @@ class RunStoreTest(unittest.TestCase):
             result['result']['review']['mismatch_indices'],
         )
 
-    def test_direction_review_target_is_unique_at_every_level(  # noqa: C901
-            self,
-    ):
+    def test_direction_review_tracks_the_marked_group_at_every_level(self):
         for level in range(1, EXTENDED_MAX_LEVEL + 1):
             with self.subTest(level=level):
                 run = self.store.create('direction-focus', 'Ada')
@@ -529,53 +541,29 @@ class RunStoreTest(unittest.TestCase):
                 public = self.store._public_run(state)['round']
                 review = state.round['review']
                 items = public['data']['items']
-                feature_count = public['data']['feature_count']
+                target_items = [
+                    item
+                    for item in items
+                    if item['visual_role'] == 'target'
+                ]
 
-                def feature_key(item):
-                    if level >= 9:
-                        features = [
-                            item['profile'],
-                            item['head_style'],
-                        ]
-                        if feature_count >= 3:
-                            features.append(item['shaft_style'])
-                        return tuple(features)
-                    features = [item['rotation_deg']]
-                    if feature_count >= 2:
-                        features.append(item['frame'])
-                    if feature_count >= 3:
-                        features.append(item['marker'])
-                    return tuple(features)
-
-                feature_counts = Counter(map(feature_key, items))
-                target_index = review['target_index']
-                target = items[target_index]
-
-                self.assertEqual(1, feature_counts[feature_key(target)])
-                if level >= 9:
-                    self.assertEqual(
-                        state.round['expected_answer'],
-                        target['direction'],
-                    )
-                else:
-                    self.assertEqual(
-                        web_engine._DIRECTION_ANGLES[
-                            state.round['expected_answer']
-                        ],
-                        target['rotation_deg'],
-                    )
                 self.assertEqual(
-                    [target_index],
-                    [
-                        index
-                        for index, item in enumerate(items)
-                        if feature_counts[feature_key(item)] == 1
-                    ],
+                    public['data']['level_config']['target_count'],
+                    len(target_items),
+                )
+                expected_direction = state.round['expected_answer']
+                self.assertTrue(all(
+                    item['motion_direction'] == expected_direction
+                    for item in target_items
+                ))
+                self.assertEqual(
+                    {item['item_id'] for item in target_items},
+                    set(review['target_item_ids']),
                 )
                 assert_no_forbidden_keys(
                     self,
                     public,
-                    {'review', 'target_index', '_review_target'},
+                    {'review', 'target_item_ids', 'expected_answer'},
                 )
 
     def test_symbol_review_matches_every_level_and_rule(self):
@@ -1492,7 +1480,99 @@ class DifficultyGeneratorTest(unittest.TestCase):
         self.assertEqual(sorted(effective_lags), effective_lags)
         self.assertLess(effective_lags[0], effective_lags[-1])
 
-    def test_direction_orientation_levels_have_one_target_angle(self):
+    def test_motion_direction_levels_use_the_pure_generator_contract(self):
+        for level in range(1, EXTENDED_MAX_LEVEL + 1):
+            for game_round in self._rounds(
+                    'direction-focus',
+                    level,
+                    count=8):
+                public = game_round['public']
+                data = public['data']
+                target_items = [
+                    item
+                    for item in data['items']
+                    if item['visual_role'] == 'target'
+                ]
+
+                self.assertEqual('motion-direction', public['kind'])
+                self.assertEqual(
+                    'motion_direction_2d',
+                    data['render_mode'],
+                )
+                self.assertEqual(level, data['level_config']['level'])
+                self.assertEqual(data['item_count'], len(data['items']))
+                self.assertEqual(
+                    data['level_config']['target_count'],
+                    len(target_items),
+                )
+                expected_direction = game_round['expected_answer']
+                self.assertTrue(all(
+                    item['motion_direction'] == expected_direction
+                    for item in target_items
+                ))
+                self.assertEqual(
+                    ['up', 'right', 'down', 'left'],
+                    public['choices'],
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'review', 'target_item_ids', 'expected_answer'},
+                )
+
+    def test_motion_direction_hard_fields_have_no_mean_or_majority_leak(self):
+        for level in range(5, EXTENDED_MAX_LEVEL + 1):
+            for game_round in self._rounds(
+                    'direction-focus',
+                    level,
+                    count=24):
+                items = game_round['public']['data']['items']
+                counts = Counter(
+                    item['motion_direction']
+                    for item in items
+                )
+                vector_sum = [
+                    sum(item['motion_vector'][axis] for item in items)
+                    for axis in range(2)
+                ]
+
+                self.assertEqual(1, len(set(counts.values())))
+                self.assertEqual([0, 0], vector_sum)
+                self.assertTrue(
+                    game_round['public']['data']['motion_balance'][
+                        'is_exact'
+                    ],
+                )
+
+    def test_new_memory_games_keep_preview_and_private_review_contracts(self):
+        expectations = {
+            'memory-matrix': ('memory-matrix', 'memory_matrix'),
+            'pinball-recall': ('pinball-recall', 'pinball_recall'),
+        }
+        for slug, (kind, render_mode) in expectations.items():
+            for level in range(1, MAX_LEVEL + 1):
+                game_round = self._rounds(
+                    slug,
+                    level,
+                    count=3,
+                )[0]
+                public = game_round['public']
+
+                self.assertEqual(kind, public['kind'])
+                self.assertEqual(render_mode, public['data']['render_mode'])
+                self.assertGreater(public['preview_ms'], 0)
+                self.assertTrue(public['hidden_prompt'])
+                self.assertEqual(
+                    time_limit_ms(slug, level),
+                    public['time_limit_ms'],
+                )
+                assert_no_forbidden_keys(
+                    self,
+                    public,
+                    {'review', 'expected_answer'},
+                )
+
+    def legacy_direction_orientation_levels_have_one_target_angle(self):
         for level in range(1, 3):
             for game_round in self._rounds(
                     'direction-focus',
@@ -1536,7 +1616,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     {'target_index', 'is_target'},
                 )
 
-    def test_direction_two_feature_levels_require_a_unique_combination(self):
+    def legacy_direction_two_feature_levels_require_unique_combination(self):
         for level in (3, 4):
             for game_round in self._rounds(
                     'direction-focus',
@@ -1598,7 +1678,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     {'target_index', 'is_target'},
                 )
 
-    def test_direction_three_feature_levels_balance_every_feature(self):
+    def legacy_direction_three_feature_levels_balance_every_feature(self):
         for level in (5, 6, 7, 8):
             for game_round in self._rounds(
                     'direction-focus',
@@ -1659,7 +1739,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     {'target_index', 'is_target'},
                 )
 
-    def test_direction_conjunction_field_has_no_average_heading_leak(self):
+    def legacy_direction_conjunction_field_has_no_average_heading_leak(self):
         for level in range(3, 9):
             for game_round in self._rounds(
                     'direction-focus',
@@ -1678,7 +1758,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                 self.assertAlmostEqual(0.0, horizontal, places=9)
                 self.assertAlmostEqual(0.0, vertical, places=9)
 
-    def test_spatial_direction_feature_marginals(self):  # noqa: C901
+    def legacy_spatial_direction_feature_marginals(self):  # noqa: C901
         expected_directions = {
             'up', 'right', 'down', 'left', 'toward', 'away',
         }
@@ -1819,7 +1899,7 @@ class DifficultyGeneratorTest(unittest.TestCase):
                     },
                 )
 
-    def test_level_ten_spatial_target_requires_all_three_features(self):
+    def legacy_level_ten_spatial_target_requires_all_three_features(self):
         feature_names = ('profile', 'head_style', 'shaft_style')
         for game_round in self._rounds(
                 'direction-focus',
@@ -2281,12 +2361,21 @@ class CulminationRunTest(unittest.TestCase):
             [game.SLUG for game in CORE_GAMES],
             sources[:len(CORE_GAMES)],
         )
-        self.assertEqual(len(CORE_GAMES), len(set(sources[:10])))
-        self.assertEqual(sources[0], sources[10])
-        self.assertEqual(list(range(1, 11)) + [1], positions)
+        self.assertEqual(
+            len(CORE_GAMES),
+            len(set(sources[:len(CORE_GAMES)])),
+        )
+        self.assertEqual(sources[0], sources[len(CORE_GAMES)])
+        self.assertEqual(
+            list(range(1, len(CORE_GAMES) + 1)) + [1],
+            positions,
+        )
         self.assertTrue(all(
             item == len(CORE_GAMES)
-            for item in [10, run['round']['cycle_total']]
+            for item in [
+                len(CORE_GAMES),
+                run['round']['cycle_total'],
+            ]
         ))
 
     def test_new_cycle_avoids_a_boundary_duplicate(self):
@@ -2306,7 +2395,10 @@ class CulminationRunTest(unittest.TestCase):
                 answer,
             )
 
-        self.assertNotEqual(sources[9], sources[10])
+        self.assertNotEqual(
+            sources[len(CORE_GAMES) - 1],
+            sources[len(CORE_GAMES)],
+        )
 
 
 if __name__ == '__main__':

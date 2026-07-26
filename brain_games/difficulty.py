@@ -26,9 +26,11 @@ _TIME_LIMITS_MS = {
     'prime': (6000, 8000, 12000, 18000, 25000),
     'number-memory': (0, 0, 0, 0, 0),
     'verbal-memory': (0, 0, 0, 0, 0),
+    'memory-matrix': (9000, 11000, 14000, 18000, 23000),
+    'pinball-recall': (16000, 20000, 26000, 34000, 44000),
     'direction-focus': (
-        8000, 8000, 8500, 9500, 11000, 13000, 11500, 10000,
-        14000, 18000,
+        7000, 6500, 6000, 5500, 5000, 4500, 4000, 3600,
+        3300, 3000,
     ),
     'symbol-match': (
         6000, 7000, 8000, 9000, 11000, 14000, 17000, 20000,
@@ -49,6 +51,8 @@ VERBAL_HISTORY_WINDOWS = (4, 8, 14, 24, None)
 VERBAL_REPEAT_LAGS = (1, 2, 4, 7, 12)
 VERBAL_SEEN_PERCENTAGES = (35, 45, 50, 50, 50)
 
+# Retained for the private legacy generators used by regression tests. Public
+# Direction Focus rounds use the motion-first generator.
 DIRECTION_ITEM_COUNTS = (5, 9, 16, 24, 24, 36, 36, 36, 24, 24)
 DIRECTION_DIFFERENCES_DEG = (90, 60, 90, 90, 90, 90, 90, 90, 90, 90)
 

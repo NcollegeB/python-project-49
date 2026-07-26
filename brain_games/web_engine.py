@@ -34,7 +34,10 @@ from brain_games.games import brain_calc
 from brain_games.games import brain_direction_focus
 from brain_games.games import brain_even
 from brain_games.games import brain_gcd
+from brain_games.games import brain_memory_matrix
+from brain_games.games import brain_motion_direction
 from brain_games.games import brain_number_memory
+from brain_games.games import brain_pinball_recall
 from brain_games.games import brain_prime
 from brain_games.games import brain_progression
 from brain_games.games import brain_symbol_match
@@ -154,8 +157,8 @@ GAME_CATALOG = (
         'Aa',
     ),
     _catalog_entry(
-        brain_direction_focus,
-        'Find balanced visual targets, then enter a 3D spatial field.',
+        brain_motion_direction,
+        'Track marked motion while arrow facings try to distract you.',
         '→',
     ),
     _catalog_entry(
@@ -168,6 +171,16 @@ GAME_CATALOG = (
         'Rearrange shuffled letters into the original word.',
         'ABC',
     ),
+    _catalog_entry(
+        brain_memory_matrix,
+        'Memorize highlighted tiles, then rebuild the pattern.',
+        '▦',
+    ),
+    _catalog_entry(
+        brain_pinball_recall,
+        'Memorize mirrors, then trace the hidden pinball route.',
+        '◩',
+    ),
     {
         'slug': CULMINATION_SLUG,
         'name': 'Culmination Test',
@@ -175,7 +188,7 @@ GAME_CATALOG = (
         'rules': (
             'Every round comes from a different BrainHacker test.'
         ),
-        'description': 'Take on all ten challenges in shuffled cycles.',
+        'description': 'Take on all twelve challenges in shuffled cycles.',
         'icon': '★',
         'max_level': max_level_for(CULMINATION_SLUG),
     },
@@ -1211,11 +1224,41 @@ class RunStore:
             brain_prime.SLUG: self._generate_prime,
             brain_number_memory.SLUG: self._generate_number_memory,
             brain_verbal_memory.SLUG: self._generate_verbal_memory,
-            brain_direction_focus.SLUG: self._generate_direction_focus,
+            brain_motion_direction.SLUG: self._generate_motion_direction,
             brain_symbol_match.SLUG: self._generate_symbol_match,
             brain_word_scramble.SLUG: self._generate_word_scramble,
+            brain_memory_matrix.SLUG: self._generate_memory_matrix,
+            brain_pinball_recall.SLUG: self._generate_pinball_recall,
         }
         return generators[source_slug](state, level)
+
+    @staticmethod
+    def _generate_motion_direction(state, level=None):
+        effective_level = state.level if level is None else level
+        return brain_motion_direction.generate_round(
+            state.rng,
+            effective_level,
+        )
+
+    @staticmethod
+    def _generate_memory_matrix(state, level=None):
+        effective_level = state.level if level is None else level
+        return brain_memory_matrix.generate_round(
+            state.rng,
+            effective_level,
+        )
+
+    @staticmethod
+    def _generate_pinball_recall(state, level=None):
+        effective_level = state.level if level is None else level
+        generated = brain_pinball_recall.generate_round(
+            state.rng,
+            effective_level,
+        )
+        generated['review']['explanation'] = (
+            'The ball exited at {} along the highlighted path.'
+        ).format(generated['expected_answer'])
+        return generated
 
     @staticmethod
     def _next_balanced_truth(state, source_slug, level=None):

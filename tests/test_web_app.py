@@ -9,6 +9,7 @@ from unittest.mock import patch
 from brain_games import app as app_module
 from brain_games.app import CSP
 from brain_games.app import create_app
+from brain_games.games.catalog import CORE_GAMES
 from brain_games.leaderboard import Leaderboard
 from brain_games.web_engine import RunStore
 
@@ -216,10 +217,14 @@ class WebAppTest(unittest.TestCase):
         response = self.client.get('/api/games')
         payload = response.get_json()
         games = payload['games']
+        expected_count = len(CORE_GAMES) + 1
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual(11, len(games))
-        self.assertEqual(11, len({game['slug'] for game in games}))
+        self.assertEqual(expected_count, len(games))
+        self.assertEqual(
+            expected_count,
+            len({game['slug'] for game in games}),
+        )
         self.assertIn('culmination', {game['slug'] for game in games})
         self.assertFalse(FORBIDDEN_ANSWER_KEYS & nested_keys(payload))
         self.assertEqual('no-store', response.headers['Cache-Control'])

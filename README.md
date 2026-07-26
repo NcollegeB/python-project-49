@@ -1,32 +1,25 @@
 # BrainHacker
 
-BrainHacker is a deliberately simple, paper-inspired browser home for ten
-endless brain games plus a mixed Culmination Test. Every correct answer adds
-one point, every mistake costs one of three lives, and the run ends when no
-lives remain. Every three correct answers advances one of five difficulty
-levels in most tests; Direction Focus, Symbol Match, and the Culmination Test
-continue through ten, ending in true 3D spatial rounds. Misses do not erase
-level progress, and the final
-level continues for as long as the player can survive. Create an account to
-keep a personal best for every test, or play without an account under a
-temporary display name.
+BrainHacker is a paper-inspired browser and terminal collection of 12
+standalone brain games plus the mixed Culmination Test: 13 catalog options in
+total. Every correct answer adds one point, every mistake costs one of three
+lives, and a run continues until all three lives are gone or the player quits.
 
-The original `brain-games` terminal hub remains available with the same games,
-three-life rules, and persistent leaderboard.
+Most games have five authored levels. Direction Focus, Symbol Match, and the
+Culmination Test continue through Level 10. Every three correct answers
+advances one level, and the final level repeats for as long as the player
+survives. Misses do not erase level progress.
+
+The hosted app is available at
+[brainhacker.vercel.app](https://brainhacker.vercel.app/).
 
 ## Browser app
 
-The Paper Test interface keeps the gameplay ahead of decoration: a ruled game
-directory, a clean test sheet, restrained sound cues, and a score report at the
-end. Each report shows the run score, saved personal best, fixed BrainHacker
-average, percentile, and equivalent rank out of 100. The `/stats` page lists
-the same stable references for all eleven tests and, when signed in, compares
-them with the account's saved bests.
-
-Sound cues are synthesized locally with the Web Audio API and can be muted
-from the header. Fonts and media remain local. When advertising is configured,
-game pages load Google AdSense; other pages remain free of third-party ad
-code.
+The browser interface keeps the games central: a compact directory, fixed
+play area, keyboard and pointer controls, restrained local sound cues, and
+light, dark, grey, and high-contrast themes. Signed-in players can keep a
+personal best for every catalog option. Guests can play under a temporary
+display name.
 
 Install the project and start the development server:
 
@@ -35,198 +28,194 @@ poetry install
 make web
 ```
 
-Then open <http://127.0.0.1:5000>. Direct game links use
-`/play/<game-slug>`, such as <http://127.0.0.1:5000/play/number-memory>.
-The JSON health check is available at <http://127.0.0.1:5000/healthz>.
+Then open <http://127.0.0.1:5000>. A game can also be opened directly at
+`/play/<game-slug>`, for example
+<http://127.0.0.1:5000/play/memory-matrix>. The health check is available at
+<http://127.0.0.1:5000/healthz>.
 
-For a production-style local process, Gunicorn can serve the same app:
+For a production-style local process:
 
 ```console
 poetry run gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 brain_games.app:app
 ```
 
-Without a database connection, use one worker because active browser runs are
-held in memory; accounts and best scores remain file-backed and persistent.
+Without `DATABASE_URL`, active browser runs are held in memory. Use one
+Gunicorn worker in that configuration so a run is not split between separate
+processes.
 
-## Levels, timing, averages, and percentiles
+## Games
 
-Before a run, the level selector can open any authored difficulty directly.
-Starting above Level 1 creates an unranked practice run; normal progression
-continues from the selected level.
+| Game | Category | What it tests | Direct command |
+| --- | --- | --- | --- |
+| Even or Odd | Math | parity under time pressure | `brain-even` |
+| Calculator | Math | mental arithmetic | `brain-calc` |
+| Greatest Common Divisor | Math | factor reasoning | `brain-gcd` |
+| Missing Progression | Reasoning | number-pattern completion | `brain-progression` |
+| Prime Number | Math | primality recognition | `brain-prime` |
+| Number Memory | Memory | digit-sequence recall | `brain-number-memory` |
+| Verbal Memory | Memory | seen/new word recognition | `brain-verbal-memory` |
+| Direction Focus | Attention | tracking 2D motion while ignoring arrow facing | `brain-direction-focus` |
+| Symbol Match | Attention | detailed symbol comparison and spatial matching | `brain-symbol-match` |
+| Word Scramble | Language | timed word reconstruction | `brain-word-scramble` |
+| Memory Matrix | Memory | recalling highlighted grid cells | hub or browser |
+| Pinball Recall | Memory | remembering mirrors and tracing a hidden route | hub or browser |
 
-Browser games offer two timing modes: Regular and Relaxed. Regular uses the
-published game clock and is eligible for saved scores when starting at Level
-1. Relaxed removes answer deadlines and always creates an unranked practice
-run. Number Memory still uses its intentional preview phase in both modes.
+Direction Focus is motion-based at every level. Early rounds teach the
+difference between movement and arrow facing; later rounds add marked groups,
+balanced distractor motion, and denser 2D fields. Choosing the direction most
+arrowheads face is not a shortcut.
 
-BrainHacker does not use the live leaderboard to calculate statistics. Every
-game has one fixed reference round-accuracy assumption for each configured
-difficulty level. The model advances after every three correct answers,
-continues indefinitely at the final level, and ends after three total misses.
-It calculates a deterministic score distribution for those rules, then
-reports the expected average and the cumulative probability for a score as a
-percentile rank out of 100.
+Memory Matrix briefly highlights a randomized set of cells, hides the pattern,
+and asks the player to select the same cells. Pinball Recall shows a grid of
+slash mirrors before hiding them, reveals an entry port, and asks where the
+ball exits.
 
-These are **BrainHacker benchmarks**: stable product baselines for comparison,
-not measured population norms, scientific results, IQ scores, or medical
-claims. Changing players or leaderboard scores never changes them.
+Symbol Match progresses from compact 2D comparisons to rotating 3D polycube
+comparisons in its final levels. Its WebGL view has a static accessible
+fallback and honors reduced-motion preferences.
 
-## Accounts and saved scores
+The Culmination Test is catalog option 13. Each 12-round cycle is a shuffled
+bag containing one round from every standalone game, so every source appears
+once before the next cycle begins. It has a shared score, three shared lives,
+and its own saved best and leaderboard.
+
+## Levels, timing, and practice
+
+The level selector can start a run at any authored difficulty. Starting above
+Level 1 creates an unranked practice run. It continues progressing normally
+from the selected level, but it does not update personal bests or leaderboard
+scores.
+
+There are two timing modes:
+
+- **Regular** uses each game's normal response deadline. A Regular run is
+  ranked only when it starts at Level 1.
+- **Relaxed** removes response deadlines and always creates an unranked
+  practice run.
+
+Preview phases remain intentional in both modes. Number Memory hides its
+number after its encoding period; Memory Matrix hides highlighted cells; and
+Pinball Recall hides its mirror layout before recall begins.
+
+## Fixed averages and percentiles
+
+The end-of-run report shows the score, saved personal best when eligible, a
+fixed BrainHacker average, percentile, and equivalent rank out of 100. The
+`/stats` page lists the same references for all 13 catalog options and compares
+them with a signed-in player's saved bests.
+
+These statistics do not depend on live players or leaderboard activity. Each
+game has fixed round-accuracy assumptions for its authored levels. The model
+uses the same three-lives, three-correct-to-advance rules as gameplay and
+calculates a deterministic score distribution.
+
+BrainHacker benchmarks are stable product baselines. They are not measured
+population norms, scientific results, IQ scores, diagnoses, or medical
+claims.
+
+## JSON API
+
+The browser is backed by the same JSON API available to other clients:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/healthz` | service health |
+| `GET` | `/api/games` | game catalog and level metadata |
+| `GET` | `/api/me` | current account state |
+| `GET` | `/api/benchmarks` | all fixed benchmark summaries |
+| `GET` | `/api/benchmarks/<slug>?score=<n>` | one benchmark and optional percentile |
+| `POST` | `/api/runs` | start a run |
+| `POST` | `/api/runs/<run-id>/answers` | submit an answer for the active round |
+| `POST` | `/api/runs/<run-id>/quit` | finish a run early |
+| `GET` | `/api/leaderboard` | filter saved scores by game or player |
+
+Start-run JSON accepts `game`, `player`, `timing_mode`, and `start_level`.
+`timing_mode` is `standard` for Regular or `self-paced` for Relaxed. Answer
+submissions include the current `round_id` and `answer`. Errors use JSON
+responses with stable error codes and appropriate HTTP status codes.
+
+## Accounts and durable storage
 
 Register at `/register` with a 3–24 character username and a password of at
-least eight characters. Usernames are case-insensitive and reserved for their
-account. Passwords are stored only as Werkzeug password hashes, and signed-in
-runs are attributed on the server rather than trusting a player name sent by
-the browser.
+least eight characters. Usernames are case-insensitive. Passwords are stored
+as Werkzeug password hashes, and signed-in run attribution is resolved on the
+server.
 
-For a public HTTPS deployment, set a persistent random session key and secure
-cookies:
+For a public HTTPS deployment, configure a stable random session key and
+secure cookies:
 
 ```console
 export BRAIN_GAMES_SECRET_KEY='replace-with-a-long-random-secret'
 export BRAIN_GAMES_SECURE_COOKIES=1
 ```
 
-`BRAIN_GAMES_SECRET_KEY` is required when the app runs on Vercel. Keep it
-stable across deployments so existing login sessions remain valid, and set
-`BRAIN_GAMES_SECURE_COOKIES=1` so session cookies are sent only over HTTPS.
+`BRAIN_GAMES_SECRET_KEY` is required on Vercel. Keeping it stable preserves
+login sessions across deployments.
 
-Set `DATABASE_URL` to a PostgreSQL connection string to store accounts, best
-scores, and live game runs durably in PostgreSQL. This lets gameplay continue
-across Vercel Function instances and deployments. The
-[Neon integration for Vercel](https://vercel.com/marketplace/neon/neon) is a
-recommended way to add managed PostgreSQL and provide the connection variable;
-connect it to the BrainHacker project before deploying.
+Set `DATABASE_URL` to a PostgreSQL connection string to store accounts,
+personal bests, leaderboards, and active runs durably. This allows gameplay to
+continue across Vercel Function instances. The
+[Neon integration for Vercel](https://vercel.com/marketplace/neon/neon) can
+provide a managed PostgreSQL database and connection variable.
 
-When `DATABASE_URL` is not set, local development keeps its original defaults:
-accounts and scores use files under `BRAIN_GAMES_DATA_DIR`, while active
-browser runs stay in memory.
+Without `DATABASE_URL`, local accounts and scores use files under
+`BRAIN_GAMES_DATA_DIR`, while active browser runs stay in memory.
 
 ## Advertising
 
-BrainHacker supports Google AdSense Auto ads on game pages. Set the public
-publisher identifier to enable the AdSense loader:
+Google AdSense Auto ads can be enabled on game pages by setting the public
+publisher identifier:
 
 ```console
 export BRAIN_GAMES_ADSENSE_CLIENT='ca-pub-1234567890123456'
 ```
 
-The value must be the real 16-digit publisher identifier from the site's
-AdSense account. When it is absent, BrainHacker does not load Google ad code.
-When present, `/ads.txt` publishes the matching authorized-seller record.
+When this variable is absent, BrainHacker does not load Google ad code. When
+present, `/ads.txt` publishes the matching authorized-seller record. Scope the
+variable to Production on Vercel so preview deployments remain ad-free.
 
-After Google approves the site, open its AdSense Auto ads settings, enable
-**Side rail ads**, open **Overlay formats → Advanced settings**, select
-**Left and right**, and disable in-page, anchor, and vignette formats if the
-site should show only the two side rails. Side rails appear only when Google
-finds enough room on a desktop screen; they do not squeeze the game layout on
-smaller screens.
+Side rails are configured in AdSense under **Auto ads → Side rail ads**. Their
+availability depends on desktop viewport space; they do not reduce the game
+area on smaller screens.
 
-On Vercel, scope `BRAIN_GAMES_ADSENSE_CLIENT` to Production so preview
-domains remain ad-free. Before enabling it, publish the appropriate European
-and US-state consent messages under **Privacy & messaging**.
+## Terminal hub
 
-## Games
-
-| Game | Category | Command | Game module |
-| --- | --- | --- | --- |
-| Even or Odd | Math | `brain-even` | `brain_games.games.brain_even` |
-| Calculator | Math | `brain-calc` | `brain_games.games.brain_calc` |
-| Greatest Common Divisor | Math | `brain-gcd` | `brain_games.games.brain_gcd` |
-| Missing Progression | Reasoning | `brain-progression` | `brain_games.games.brain_progression` |
-| Prime Number | Math | `brain-prime` | `brain_games.games.brain_prime` |
-| Number Memory | Memory | `brain-number-memory` | `brain_games.games.brain_number_memory` |
-| Verbal Memory | Memory | `brain-verbal-memory` | `brain_games.games.brain_verbal_memory` |
-| Direction Focus | Attention | `brain-direction-focus` | `brain_games.games.brain_direction_focus` |
-| Symbol Match | Attention | `brain-symbol-match` | `brain_games.games.brain_symbol_match` |
-| Word Scramble | Language | `brain-word-scramble` | `brain_games.games.brain_word_scramble` |
-
-The separate **Culmination Test** is menu option 11. It combines all ten games
-into one endless run with a shared score and three shared lives. Each
-ten-round cycle is a shuffled bag containing one round from every source game,
-so all ten appear once before the next shuffled cycle begins. Culmination Test
-scores are recorded on their own leaderboard.
-
-The newer challenges draw on familiar memory, attention, speed, and language
-game formats. They are original terminal implementations for practice and
-entertainment; this project is not affiliated with any benchmark or training
-service and does not claim medical or cognitive benefits.
-
-## Short answers and controls
-
-- For every yes/no game, enter `y` or `yes`, and `n` or `no`.
-- In Direction Focus, enter `u`, `d`, `l`, or `r` instead of `up`, `down`,
-  `left`, or `right`. In the 3D levels, `t` means toward and `a` means
-  away. Arrow and depth symbols also work.
-- Enter `q` or `quit` during a game to save the current score and return to
-  the hub.
-
-Answers are case-insensitive. Games that require a number or a word still
-expect the complete answer, and any incorrect non-quit answer costs a life.
-
-## Install from this repository
-
-Poetry creates an isolated environment and installs every project command:
-
-```console
-poetry install
-```
-
-To build and install the wheel into your user environment instead:
-
-```console
-make build
-make package-install
-```
-
-## Run the arcade
-
-After a regular installation, launch the hub with:
+After installation, launch the terminal hub with:
 
 ```console
 brain-games
 ```
 
-From the Poetry development environment, use:
+From the Poetry environment:
 
 ```console
 poetry run brain-games
 ```
 
-Choose one of the ten standalone games or option 11 for the Culmination Test,
-enter `l` to view the leaderboard, or enter `q` to quit. A run continues until
-all three lives are gone or you return to the hub, and its score is saved in
-either case.
-
-## Run one game directly
-
-Every game has its own command. Prefix a command with `poetry run` when using
-the Poetry environment:
+The hub lists all 12 standalone games and the Culmination Test. It also
+provides the leaderboard and quit actions. Direct launcher commands are
+available for the games shown in the table above, plus:
 
 ```console
-brain-even
-brain-calc
-brain-gcd
-brain-progression
-brain-prime
-brain-number-memory
-brain-verbal-memory
-brain-direction-focus
-brain-symbol-match
-brain-word-scramble
 brain-culmination
 ```
 
-## Leaderboard data
+During play:
 
-Each player's best result for every standalone game and the Culmination Test is
-retained. By default, scores are stored at:
+- enter `y`/`yes` or `n`/`no` for yes-or-no games;
+- enter `u`, `r`, `d`, or `l` for Direction Focus;
+- enter `q` or `quit` to save the current score and return to the hub.
+
+Answers are case-insensitive. Number and word games still require the complete
+answer, and every incorrect non-quit answer costs one life.
+
+## Local leaderboard files
+
+When PostgreSQL is not configured, best scores are stored at:
 
 ```text
 ~/.brain_games/leaderboard.json
 ```
-
-Set `BRAIN_GAMES_DATA_DIR` to choose a different data directory.
 
 Registered accounts are stored separately at:
 
@@ -234,27 +223,28 @@ Registered accounts are stored separately at:
 ~/.brain_games/accounts.json
 ```
 
-The account file is written with owner-only permissions on POSIX systems.
+Set `BRAIN_GAMES_DATA_DIR` to choose a different directory. On POSIX systems,
+the account file is written with owner-only permissions.
 
-## Tests and checks
+## Build and verification
 
-Run the test suite with:
+Build and install the wheel into the user environment:
+
+```console
+make build
+make package-install
+```
+
+Run the test suite and complete project checks:
 
 ```console
 make test
+make check
 ```
 
-Optional project checks are also available:
+Individual checks are available through `make lint`, `make selfcheck`, and
+`make web-check`.
 
-```console
-make lint
-make selfcheck
-make web-check
-```
-
-Run the complete verification set with `make check`.
-
-The test suite covers the endless three-life loop, answer aliases, scoring,
-leaderboard persistence and ordering, game generators, the shuffled
-Culmination Test cycle, terminal hub flow, isolated browser runs, and API
-validation.
+The games are intended for practice and entertainment. BrainHacker is not
+affiliated with a cognitive benchmark or training service and does not claim
+medical benefits.

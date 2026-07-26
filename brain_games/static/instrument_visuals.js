@@ -493,6 +493,114 @@ function coneMeshArrays(
 }
 
 
+function arrowMeshArrays(segments = 8) {
+    const positions = [];
+    const normals = [];
+    const indices = [];
+    const safeSegments = Math.max(3, Math.round(segments));
+    const tailY = -0.54;
+    const shoulderY = 0.04;
+    const tipY = 0.56;
+    const shaftRadius = 0.14;
+    const headRadius = 0.36;
+
+    const addFace = (points) => {
+        const firstEdge = points[1].map(
+            (value, index) => value - points[0][index],
+        );
+        const secondEdge = points[2].map(
+            (value, index) => value - points[0][index],
+        );
+        const rawNormal = [
+            (firstEdge[1] * secondEdge[2])
+                - (firstEdge[2] * secondEdge[1]),
+            (firstEdge[2] * secondEdge[0])
+                - (firstEdge[0] * secondEdge[2]),
+            (firstEdge[0] * secondEdge[1])
+                - (firstEdge[1] * secondEdge[0]),
+        ];
+        const normalLength = Math.max(0.0001, Math.hypot(...rawNormal));
+        const normal = rawNormal.map(
+            (component) => component / normalLength,
+        );
+        const offset = positions.length / 3;
+        points.forEach((point) => {
+            positions.push(...point);
+            normals.push(...normal);
+        });
+        for (let index = 1; index < points.length - 1; index += 1) {
+            indices.push(offset, offset + index, offset + index + 1);
+        }
+    };
+
+    for (let index = 0; index < safeSegments; index += 1) {
+        const firstAngle = (index / safeSegments) * Math.PI * 2;
+        const secondAngle = (
+            (index + 1) / safeSegments
+        ) * Math.PI * 2;
+        const radialPoint = (radius, y, angle) => [
+            Math.cos(angle) * radius,
+            y,
+            Math.sin(angle) * radius,
+        ];
+        const tailFirst = radialPoint(
+            shaftRadius,
+            tailY,
+            firstAngle,
+        );
+        const tailSecond = radialPoint(
+            shaftRadius,
+            tailY,
+            secondAngle,
+        );
+        const shaftFirst = radialPoint(
+            shaftRadius,
+            shoulderY,
+            firstAngle,
+        );
+        const shaftSecond = radialPoint(
+            shaftRadius,
+            shoulderY,
+            secondAngle,
+        );
+        const headFirst = radialPoint(
+            headRadius,
+            shoulderY,
+            firstAngle,
+        );
+        const headSecond = radialPoint(
+            headRadius,
+            shoulderY,
+            secondAngle,
+        );
+
+        addFace([
+            tailFirst,
+            shaftFirst,
+            shaftSecond,
+            tailSecond,
+        ]);
+        addFace([
+            shaftFirst,
+            headFirst,
+            headSecond,
+            shaftSecond,
+        ]);
+        addFace([
+            headFirst,
+            [0, tipY, 0],
+            headSecond,
+        ]);
+        addFace([
+            [0, tailY, 0],
+            tailFirst,
+            tailSecond,
+        ]);
+    }
+    return {positions, normals, indices};
+}
+
+
 function polyhedronMeshArrays(vertices, faces) {
     const positions = [];
     const normals = [];
@@ -792,21 +900,21 @@ export class InstrumentVisuals {
                         this.gl,
                         octahedronMeshArrays(),
                     ),
-                    cone: meshBufferInfo(
+                    arrowTetrahedron: meshBufferInfo(
                         this.gl,
-                        coneMeshArrays(12, 0.5, 0),
+                        arrowMeshArrays(3),
                     ),
-                    prism3: meshBufferInfo(
+                    arrowCube: meshBufferInfo(
                         this.gl,
-                        coneMeshArrays(3, 0.5, 0.5),
+                        arrowMeshArrays(4),
                     ),
-                    prism6: meshBufferInfo(
+                    arrowOctahedron: meshBufferInfo(
                         this.gl,
-                        coneMeshArrays(6, 0.5, 0.5),
+                        arrowMeshArrays(8),
                     ),
-                    cylinder: meshBufferInfo(
+                    bandCollar: meshBufferInfo(
                         this.gl,
-                        coneMeshArrays(12, 0.5, 0.5),
+                        coneMeshArrays(16, 0.5, 0.5),
                     ),
                 };
             } catch (_error) {
@@ -1025,28 +1133,15 @@ export class InstrumentVisuals {
         twgl.drawBufferInfo(this.gl, mesh);
     }
 
-    directionShaftMesh(solid) {
+    directionArrowMesh(solid) {
         const name = String(solid || '').toLowerCase();
         if (name.includes('tetra')) {
-            return this.meshes.tetrahedron;
+            return this.meshes.arrowTetrahedron;
         }
         if (name.includes('octa')) {
-            return this.meshes.octahedron;
+            return this.meshes.arrowOctahedron;
         }
-        if (name.includes('tri')) {
-            return this.meshes.prism3;
-        }
-        if (name.includes('hex')) {
-            return this.meshes.prism6;
-        }
-        if (
-            name.includes('round')
-            || name.includes('cylinder')
-            || name.includes('tube')
-        ) {
-            return this.meshes.cylinder;
-        }
-        return this.meshes.cube;
+        return this.meshes.arrowCube;
     }
 
     drawDirection3D() {
@@ -1110,26 +1205,9 @@ export class InstrumentVisuals {
                     isTarget ? 1.09 : 1,
                 ),
             );
-            const shaftMesh = this.directionShaftMesh(item?.solid);
-            const shaft = mat4Compose(
-                base,
-                mat4Translation(0, -0.17, 0),
-                mat4Scaling(0.34, 0.65, 0.34),
-            );
-            const head = mat4Compose(
-                base,
-                mat4Translation(0, 0.29, 0),
-                mat4Scaling(0.72, 0.45, 0.72),
-            );
             this.drawSolid(
-                shaftMesh,
-                shaft,
-                viewProjection,
-                color,
-            );
-            this.drawSolid(
-                this.meshes.cone,
-                head,
+                this.directionArrowMesh(item?.solid),
+                base,
                 viewProjection,
                 color,
             );
@@ -1142,10 +1220,10 @@ export class InstrumentVisuals {
                 const band = mat4Compose(
                     base,
                     mat4Translation(0, bandY, 0),
-                    mat4Scaling(0.39, 0.075, 0.39),
+                    mat4Scaling(0.38, 0.075, 0.38),
                 );
                 this.drawSolid(
-                    shaftMesh,
+                    this.meshes.bandCollar,
                     band,
                     viewProjection,
                     isTarget ? colors.error : bandColor,
@@ -1337,18 +1415,6 @@ export class InstrumentVisuals {
         if (field) {
             addCornerFrame(guideLines, field, 9, 12);
         }
-        tokens.forEach((token, index) => {
-            const rect = relativeRect(token, origin);
-            const centerX = rect.left + (rect.width / 2);
-            const tick = index % 2 === 0 ? 4 : 2;
-            addLine(
-                guideLines,
-                centerX,
-                rect.top - 5,
-                centerX,
-                rect.top - 5 - tick,
-            );
-        });
         const targetIndex = Number(this.review?.target_index);
         if (
             Number.isInteger(targetIndex)

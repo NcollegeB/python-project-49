@@ -1502,22 +1502,74 @@ function spatialRenderMode(data) {
 }
 
 
-function direction3DGlyph(item) {
-    if (item?.glyph) {
-        return String(item.glyph);
+function directionArrowRotation(tokenData) {
+    if (tokenData.rotation !== null) {
+        return tokenData.rotation;
     }
-    const glyphs = {
-        up: '↑',
-        right: '→',
-        down: '↓',
-        left: '←',
-        toward: '⊙',
-        towards: '⊙',
-        forward: '⊙',
-        away: '⊗',
-        backward: '⊗',
+    const rotations = {
+        '↑': 0,
+        '↗': 45,
+        '→': 90,
+        '↘': 135,
+        '↓': 180,
+        '↙': 225,
+        '←': 270,
+        '↖': 315,
     };
-    return glyphs[String(item?.direction || '').toLowerCase()] || '↑';
+    return rotations[tokenData.glyph] ?? null;
+}
+
+
+function createDirectionArrow(direction = '') {
+    const arrow = document.createElement('span');
+    arrow.className = 'direction-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+
+    const depthDirection = String(direction).toLowerCase();
+    const isToward = new Set(['toward', 'towards', 'forward']).has(
+        depthDirection,
+    );
+    const isAway = new Set(['away', 'backward']).has(depthDirection);
+    if (isToward || isAway) {
+        arrow.classList.add(
+            'direction-arrow--depth',
+            isToward
+                ? 'direction-arrow--toward'
+                : 'direction-arrow--away',
+        );
+        arrow.append(createTextElement(
+            'span',
+            'direction-arrow__depth-mark',
+            '',
+        ));
+        if (isAway) {
+            arrow.append(
+                createTextElement(
+                    'span',
+                    (
+                        'direction-arrow__depth-stroke '
+                        + 'direction-arrow__depth-stroke--forward'
+                    ),
+                    '',
+                ),
+                createTextElement(
+                    'span',
+                    (
+                        'direction-arrow__depth-stroke '
+                        + 'direction-arrow__depth-stroke--backward'
+                    ),
+                    '',
+                ),
+            );
+        }
+        return arrow;
+    }
+
+    arrow.append(
+        createTextElement('span', 'direction-arrow__shaft', ''),
+        createTextElement('span', 'direction-arrow__head', ''),
+    );
+    return arrow;
 }
 
 
@@ -1596,14 +1648,7 @@ function renderDirection3DFallback(round, visual) {
             '',
         );
         band.setAttribute('aria-hidden', 'true');
-        token.append(
-            band,
-            createTextElement(
-                'span',
-                'arrow-token__glyph',
-                direction3DGlyph(item),
-            ),
-        );
+        token.append(band, createDirectionArrow(item?.direction));
         field.append(token);
     });
     visual.append(field);
@@ -1857,14 +1902,11 @@ function renderGenericVisual(round) {
                     ));
                 }
             }
-            if (tokenData.rotation !== null) {
-                token.dataset.rotation = String(tokenData.rotation);
+            const arrowRotation = directionArrowRotation(tokenData);
+            if (arrowRotation !== null) {
+                token.dataset.rotation = String(arrowRotation);
             }
-            token.append(createTextElement(
-                'span',
-                'arrow-token__glyph',
-                tokenData.glyph,
-            ));
+            token.append(createDirectionArrow());
             row.append(token);
         });
         visual.append(row);

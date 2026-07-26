@@ -419,6 +419,12 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 "new Set(['direction_3d', 'polycube_3d'])",
                 'depth: true',
                 'SOLID_VERTEX_SHADER',
+                'function arrowMeshArrays(segments = 8)',
+                'this.meshes.arrowTetrahedron',
+                'this.meshes.arrowCube',
+                'this.meshes.arrowOctahedron',
+                'this.meshes.bandCollar',
+                'directionArrowMesh(solid)',
                 'drawDirection3D()',
                 'drawPolycube3D()',
                 "'(prefers-reduced-motion: reduce)'",
@@ -426,6 +432,29 @@ class FrontendProgressionContractTest(unittest.TestCase):
         ):
             self.assertIn(source, self.instrument_javascript)
         self.assertNotIn('Math.random(', self.instrument_javascript)
+        self.assertNotIn(
+            'directionShaftMesh(solid)',
+            self.instrument_javascript,
+        )
+
+    def test_direction_overlay_has_no_per_arrow_guide_artifacts(self):
+        direction_geometry = self.instrument_javascript.split(
+            'directionGeometry(origin, guideLines, reviewLines, reviewFill) {',
+            1,
+        )[1].split(
+            'symbolGeometry(origin, guideLines, reviewLines, reviewFill) {',
+            1,
+        )[0]
+        self.assertNotIn('tokens.forEach(', direction_geometry)
+        self.assertNotIn('rect.top - 5', direction_geometry)
+        self.assertIn(
+            'addCornerFrame(guideLines, field, 9, 12);',
+            direction_geometry,
+        )
+        self.assertIn(
+            'addFilledRectangle(reviewFill, target, 4);',
+            direction_geometry,
+        )
 
     def test_spatial_rounds_have_webgl_and_static_accessible_renderers(self):
         for source in (
@@ -447,6 +476,38 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 '.polycube-projection__cell[data-review-state="mismatch"]',
         ):
             self.assertIn(source, self.stylesheet)
+
+    def test_direction_arrows_use_crisp_css_geometry(self):
+        for source in (
+                'function createDirectionArrow(direction = \'\')',
+                "'direction-arrow__shaft'",
+                "'direction-arrow__head'",
+                "'direction-arrow--toward'",
+                "'direction-arrow--away'",
+                'token.append(createDirectionArrow());',
+                'token.append(band, createDirectionArrow(item?.direction));',
+        ):
+            self.assertIn(source, self.javascript)
+        for source in (
+                '.direction-arrow__shaft',
+                '.direction-arrow__head',
+                'clip-path: polygon(50% 0, 100% 100%, 0 100%);',
+                '.direction-arrow--depth',
+                '.direction-arrow__depth-stroke--forward',
+                '.direction-arrow__depth-stroke--backward',
+                '.direction-3d-token .direction-arrow',
+                '.direction-3d-token__beacon',
+        ):
+            self.assertIn(source, self.stylesheet)
+        self.assertNotIn('function direction3DGlyph', self.javascript)
+        direction_block = self.javascript.split(
+            "if (\n        kind === 'direction'",
+            1,
+        )[1].split(
+            'if (\n        Array.isArray(data.symbols)',
+            1,
+        )[0]
+        self.assertNotIn("'arrow-token__glyph'", direction_block)
 
     def test_vercel_assets_match_local_assets(self):
         for name in (

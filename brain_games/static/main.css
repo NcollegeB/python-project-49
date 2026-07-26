@@ -1177,15 +1177,82 @@ kbd {
     letter-spacing: 0.08em;
 }
 
-.arrow-token__glyph {
+.direction-arrow {
+    position: relative;
+    z-index: 1;
     display: block;
-    line-height: 1;
+    width: 64%;
+    height: 64%;
+    color: currentcolor;
     transform: rotate(var(--arrow-rotation, 0deg));
     transform-origin: center;
 }
 
+.direction-arrow__shaft {
+    position: absolute;
+    top: 31%;
+    bottom: 5%;
+    left: 44%;
+    width: 12%;
+    min-width: 3px;
+    background: currentcolor;
+}
+
+.direction-arrow__head {
+    position: absolute;
+    top: 3%;
+    left: 24%;
+    width: 52%;
+    height: 38%;
+    background: currentcolor;
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.direction-arrow--depth {
+    width: 50%;
+    height: 50%;
+    border: max(2px, 0.15em) solid currentcolor;
+    border-radius: 50%;
+    transform: none;
+}
+
+.direction-arrow__depth-mark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 24%;
+    height: 24%;
+    border-radius: 50%;
+    background: currentcolor;
+    transform: translate(-50%, -50%);
+}
+
+.direction-arrow--away .direction-arrow__depth-mark {
+    display: none;
+}
+
+.direction-arrow__depth-stroke {
+    position: absolute;
+    top: 44%;
+    left: 18%;
+    width: 64%;
+    height: 12%;
+    min-height: 3px;
+    background: currentcolor;
+    transform-origin: center;
+}
+
+.direction-arrow__depth-stroke--forward {
+    transform: rotate(45deg);
+}
+
+.direction-arrow__depth-stroke--backward {
+    transform: rotate(-45deg);
+}
+
 .arrow-token__marker {
     position: absolute;
+    z-index: 3;
     top: 5px;
     right: 5px;
     width: 7px;
@@ -1277,6 +1344,10 @@ kbd {
     transform-origin: center;
 }
 
+.direction-3d-token .direction-arrow {
+    z-index: 3;
+}
+
 .direction-3d-token[data-band="none"] .direction-3d-token__band,
 .direction-3d-token[data-band="off"] .direction-3d-token__band,
 .direction-3d-token[data-band="false"] .direction-3d-token__band {
@@ -1294,7 +1365,7 @@ kbd {
 
 .direction-3d-token__beacon {
     position: absolute;
-    z-index: 3;
+    z-index: 4;
     top: 7px;
     left: 7px;
     width: 8px;

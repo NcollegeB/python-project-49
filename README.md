@@ -2,8 +2,9 @@
 
 BrainHacker is a paper-inspired browser and terminal collection of 12
 standalone brain games plus the mixed Culmination Test: 13 catalog options in
-total. Every correct answer adds one point, every mistake costs one of three
-lives, and a run continues until all three lives are gone or the player quits.
+total. Every solved round adds one point, every failed round costs one of
+three lives, and a run continues until all three lives are gone or the player
+quits.
 
 Most games have five authored levels. Direction Focus, Symbol Match, and the
 Culmination Test continue through Level 10. Every three correct answers
@@ -66,9 +67,10 @@ balanced distractor motion, and denser 2D fields. Choosing the direction most
 arrowheads face is not a shortcut.
 
 Memory Matrix briefly highlights a randomized set of cells, hides the pattern,
-and asks the player to select the same cells. Pinball Recall shows a grid of
-slash mirrors before hiding them, reveals an entry port, and asks where the
-ball exits.
+and grades each recalled tile as soon as it is clicked. Every tile has a short
+sound cue, and the third miss in one pattern costs a life. Pinball Recall shows
+a grid of slash mirrors before hiding them, reveals an entry port, and asks
+where the ball exits.
 
 Symbol Match progresses from compact 2D comparisons to rotating 3D polycube
 comparisons in its final levels. Its WebGL view has a static accessible

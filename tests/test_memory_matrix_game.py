@@ -11,7 +11,8 @@ class MemoryMatrixGameTest(unittest.TestCase):
         self.assertEqual('Memory Matrix', brain_memory_matrix.NAME)
         self.assertEqual('memory-matrix', brain_memory_matrix.SLUG)
         self.assertEqual('Memory', brain_memory_matrix.CATEGORY)
-        self.assertTrue(brain_memory_matrix.RULES)
+        self.assertIn('one at a time', brain_memory_matrix.RULES)
+        self.assertEqual(3, brain_memory_matrix.MAX_TILE_MISSES)
 
         question, answer = brain_memory_matrix.get_question_and_answer()
         self.assertIn('Memorize', question)
@@ -34,8 +35,13 @@ class MemoryMatrixGameTest(unittest.TestCase):
                 self.assertEqual('memory-matrix', generated['kind'])
                 self.assertEqual('memory_matrix', data['render_mode'])
                 self.assertEqual('select_tiles', data['recall_mode'])
+                self.assertEqual(
+                    'instant_tiles',
+                    data['interaction_mode'],
+                )
+                self.assertEqual(3, data['max_misses'])
                 self.assertGreater(generated['preview_ms'], 0)
-                self.assertTrue(generated['hidden_prompt'])
+                self.assertIn('Two misses', generated['hidden_prompt'])
                 self.assertGreater(data['grid_size'], previous_grid_size)
                 self.assertGreater(
                     data['required_count'],

@@ -20,6 +20,9 @@ class FrontendProgressionContractTest(unittest.TestCase):
         cls.instrument_javascript = (
             STATIC_ROOT / 'instrument_visuals.js'
         ).read_text(encoding='utf-8')
+        cls.audio_javascript = (
+            STATIC_ROOT / 'audio.js'
+        ).read_text(encoding='utf-8')
         cls.template = (
             PROJECT_ROOT / 'brain_games' / 'templates' / 'index.html'
         ).read_text(encoding='utf-8')
@@ -521,7 +524,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
         ):
             self.assertIn(source, self.stylesheet)
 
-    def test_memory_matrix_allows_review_before_explicit_submission(self):
+    def test_memory_matrix_grades_tiles_immediately_with_sound(self):
         render_block = self.javascript.split(
             'function renderMemoryMatrix',
             1,
@@ -536,14 +539,29 @@ class FrontendProgressionContractTest(unittest.TestCase):
             'grid.append(tile);',
             1,
         )[0]
-        self.assertNotIn('submitAnswer(', tile_click_block)
         for source in (
-                "'Check pattern'",
-                "submitPattern.dataset.matrixSubmit = 'true';",
-                "submitPattern.addEventListener('click'",
-                "submitAnswer(selected.join(','), submitPattern);",
+                "tile.dataset.selectionOutcome = correctTile",
+                "tile.dataset.nonAnswer = 'true';",
+                "audio.cue(correctTile ? 'tile' : 'tileWrong');",
+                'const found = matrixFoundSelection(visual);',
+                'const misses = matrixMissCount(visual);',
+                'if (found.length === requiredCount)',
+                'else if (misses >= maxMisses)',
+                '{inputCue: false}',
         ):
-            self.assertIn(source, render_block)
+            self.assertIn(source, tile_click_block)
+        self.assertEqual(2, tile_click_block.count('submitAnswer('))
+        self.assertNotIn('Check pattern', render_block)
+        self.assertNotIn('matrixSubmit', render_block)
+        self.assertIn(
+            'options.inputCue !== false',
+            self.javascript,
+        )
+        for source in (
+                'tile: [',
+                'tileWrong: [',
+        ):
+            self.assertIn(source, self.audio_javascript)
         review_block = self.javascript.split(
             'function annotateRecallReview',
             1,
@@ -560,7 +578,6 @@ class FrontendProgressionContractTest(unittest.TestCase):
         ):
             self.assertIn(source, review_block)
         for source in (
-                '.memory-matrix__submit',
                 '[data-selection-outcome="correct"]::after',
                 '[data-selection-outcome="missed"]::after',
                 '[data-selection-outcome="incorrect"]::after',
@@ -569,6 +586,7 @@ class FrontendProgressionContractTest(unittest.TestCase):
                 'content: "×";',
         ):
             self.assertIn(source, self.stylesheet)
+        self.assertNotIn('.memory-matrix__submit', self.stylesheet)
 
     def test_direction_arrows_use_crisp_css_geometry(self):
         for source in (

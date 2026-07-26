@@ -7,9 +7,10 @@ NAME = 'Memory Matrix'
 SLUG = 'memory-matrix'
 CATEGORY = 'Memory'
 RULES = (
-    'Memorize the highlighted tiles, then select the same tiles after '
-    'they disappear.'
+    'Memorize the highlighted tiles, then find them one at a time after '
+    'they disappear. A third missed tile costs one life.'
 )
+MAX_TILE_MISSES = 3
 
 # Grid side, highlighted tiles, and preview time in milliseconds.
 _LEVELS = {
@@ -69,12 +70,13 @@ def generate_round(rng, level):
     )
     expected_answer = ','.join(str(index) for index in highlighted)
     instruction = 'Memorize the highlighted tiles.'
-    hidden_prompt = 'Select the {} tiles that were highlighted.'.format(
-        required_count,
-    )
+    hidden_prompt = (
+        'Find the {} highlighted tiles. Two misses are allowed.'
+    ).format(required_count)
     accessible_instruction = (
-        'Memorize {} highlighted tiles in a {} by {} grid, then select '
-        'the same tiles after they disappear.'
+        'Memorize {} highlighted tiles in a {} by {} grid, then find '
+        'them one at a time after they disappear. A third missed tile '
+        'costs one life.'
     ).format(required_count, grid_size, grid_size)
 
     return {
@@ -89,6 +91,8 @@ def generate_round(rng, level):
             'instruction': instruction,
             'accessible_instruction': accessible_instruction,
             'recall_mode': 'select_tiles',
+            'interaction_mode': 'instant_tiles',
+            'max_misses': MAX_TILE_MISSES,
         },
         'choices': [],
         'preview_ms': preview_ms,
@@ -96,8 +100,8 @@ def generate_round(rng, level):
         'review': {
             'target_indices': list(highlighted),
             'explanation': (
-                'Green tiles were in the original pattern; red tiles were '
-                'selected but did not belong.'
+                'Checks were remembered correctly, plus signs were missed, '
+                'and crosses were incorrect clicks.'
             ),
         },
     }

@@ -1955,26 +1955,40 @@ function matrixSelection(visual) {
 }
 
 
-function updateMatrixCounter(visual, requiredCount) {
-    const selectedCount = matrixSelection(visual).length;
+function matrixFoundSelection(visual) {
+    return Array.from(
+        visual.querySelectorAll(
+            '.memory-matrix__tile[data-selection-outcome="correct"]',
+        ),
+    ).map((tile) => Number(tile.dataset.index))
+        .filter(Number.isInteger)
+        .sort((first, second) => first - second);
+}
+
+
+function matrixMissCount(visual) {
+    return visual.querySelectorAll(
+        '.memory-matrix__tile[data-selection-outcome="incorrect"]',
+    ).length;
+}
+
+
+function updateMatrixCounter(visual, requiredCount, maxMisses) {
+    const foundCount = matrixFoundSelection(visual).length;
+    const missCount = matrixMissCount(visual);
     const counter = visual.querySelector('.memory-matrix__counter');
-    const submitButton = visual.querySelector('[data-matrix-submit="true"]');
     if (counter) {
-        counter.textContent = `${selectedCount} / ${requiredCount}`;
-    }
-    if (submitButton) {
-        submitButton.disabled = (
-            visual.dataset.recallPhase !== 'answer'
-            || state.busy
-            || selectedCount !== requiredCount
+        counter.textContent = (
+            `${foundCount} / ${requiredCount} found`
+            + ` · ${missCount} / ${maxMisses} misses`
         );
     }
     if (visual.dataset.recallPhase !== 'preview') {
         visual.setAttribute(
             'aria-label',
             (
-                `Memory Matrix. ${selectedCount} of `
-                + `${requiredCount} tiles selected.`
+                `Memory Matrix. ${foundCount} of ${requiredCount} tiles `
+                + `found. ${missCount} of ${maxMisses} misses used.`
             ),
         );
     }
@@ -1990,6 +2004,10 @@ function renderMemoryMatrix(round, visual) {
             gridSize * gridSize,
             Number(data.required_count || 1),
         ),
+    );
+    const maxMisses = Math.max(
+        1,
+        Math.min(9, Number(data.max_misses || 3)),
     );
     const highlighted = new Set(
         Array.isArray(data.highlighted_indices)
@@ -2013,7 +2031,7 @@ function renderMemoryMatrix(round, visual) {
     const counter = createTextElement(
         'span',
         'memory-matrix__counter',
-        `0 / ${requiredCount}`,
+        `0 / ${requiredCount} found · 0 / ${maxMisses} misses`,
     );
     counter.setAttribute('aria-live', 'polite');
     const grid = document.createElement('div');
@@ -2045,43 +2063,51 @@ function renderMemoryMatrix(round, visual) {
             if (
                 visual.dataset.recallPhase !== 'answer'
                 || state.busy
+                || tile.dataset.selected === 'true'
             ) {
                 return;
             }
-            if (tile.dataset.selected === 'true') {
-                delete tile.dataset.selected;
-                tile.setAttribute('aria-pressed', 'false');
-            } else {
-                tile.dataset.selected = 'true';
-                tile.setAttribute('aria-pressed', 'true');
+            const coordinate = (
+                `Row ${Math.floor(index / gridSize) + 1}, column ${
+                    (index % gridSize) + 1
+                }`
+            );
+            const correctTile = highlighted.has(index);
+            tile.dataset.selected = 'true';
+            tile.dataset.nonAnswer = 'true';
+            tile.dataset.selectionOutcome = correctTile
+                ? 'correct'
+                : 'incorrect';
+            tile.setAttribute('aria-pressed', 'true');
+            tile.setAttribute(
+                'aria-label',
+                `${coordinate}. ${correctTile ? 'Found' : 'Missed'}.`,
+            );
+            tile.disabled = true;
+            audio.cue(correctTile ? 'tile' : 'tileWrong');
+            updateMatrixCounter(visual, requiredCount, maxMisses);
+
+            const found = matrixFoundSelection(visual);
+            const misses = matrixMissCount(visual);
+            if (found.length === requiredCount) {
+                submitAnswer(
+                    found.join(','),
+                    tile,
+                    {inputCue: false},
+                );
+            } else if (misses >= maxMisses) {
+                submitAnswer(
+                    matrixSelection(visual).join(','),
+                    tile,
+                    {inputCue: false},
+                );
             }
-            updateMatrixCounter(visual, requiredCount);
         });
         grid.append(tile);
     }
-    const submitPattern = createTextElement(
-        'button',
-        'memory-matrix__submit',
-        'Check pattern',
-    );
-    submitPattern.type = 'button';
-    submitPattern.disabled = true;
-    submitPattern.dataset.recallControl = 'true';
-    submitPattern.dataset.matrixSubmit = 'true';
-    submitPattern.addEventListener('click', () => {
-        const selected = matrixSelection(visual);
-        if (
-            visual.dataset.recallPhase !== 'answer'
-            || state.busy
-            || selected.length !== requiredCount
-        ) {
-            return;
-        }
-        submitAnswer(selected.join(','), submitPattern);
-    });
-    shell.append(counter, grid, submitPattern);
+    shell.append(counter, grid);
     visual.replaceChildren(shell);
-    updateMatrixCounter(visual, requiredCount);
+    updateMatrixCounter(visual, requiredCount, maxMisses);
 }
 
 
@@ -2733,6 +2759,7 @@ function revealMemoryAnswer(round) {
             updateMatrixCounter(
                 dom.roundVisual,
                 Number(round.data?.required_count || 1),
+                Number(round.data?.max_misses || 3),
             );
         }
         currentEnabledAnswerControl()?.focus({preventScroll: true});
@@ -2966,17 +2993,8 @@ function setControlsDisabled(disabled) {
     });
     dom.roundVisual.querySelectorAll('[data-recall-control]').forEach(
         (control) => {
-            const matrixSubmit = control.dataset.matrixSubmit === 'true';
-            const requiredCount = Number(
-                state.round?.data?.required_count || 0,
-            );
-            const incompleteMatrix = (
-                matrixSubmit
-                && matrixSelection(dom.roundVisual).length !== requiredCount
-            );
             control.disabled = disabled
-                || control.dataset.nonAnswer === 'true'
-                || incompleteMatrix;
+                || control.dataset.nonAnswer === 'true';
         },
     );
 }
@@ -3033,7 +3051,12 @@ function restoreCurrentAnswerFocus() {
 }
 
 
-function beginPendingFeedback(control, roundId, timedOut) {
+function beginPendingFeedback(
+        control,
+        roundId,
+        timedOut,
+        playInputCue = true,
+) {
     clearPendingFeedback();
     state.pendingRoundId = roundId;
     state.pendingControl = control;
@@ -3046,7 +3069,7 @@ function beginPendingFeedback(control, roundId, timedOut) {
         timedOut ? 'Time is up — checking…' : 'Checking…',
         'pending',
     );
-    if (!timedOut) {
+    if (!timedOut && playInputCue) {
         audio.cue('click');
     }
     state.pendingTimer = window.setTimeout(() => {
@@ -3249,7 +3272,12 @@ async function submitAnswer(answer, control = null, options = {}) {
             lockTimedOutRound(runId, roundId, requestSequence);
         }
     }
-    beginPendingFeedback(submittedControl, roundId, timedOut);
+    beginPendingFeedback(
+        submittedControl,
+        roundId,
+        timedOut,
+        options.inputCue !== false,
+    );
     setControlsDisabled(true);
 
     // Let the pressed state and checking message paint before network work.
